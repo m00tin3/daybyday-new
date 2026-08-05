@@ -1,0 +1,52 @@
+# ============================================================
+# Day-BY-Day 后端配置
+# 数据库连接密码可用环境变量 DB_PASSWORD 覆盖（默认 1234）
+# ============================================================
+
+server:
+  # 后端端口：nginx 反代 /api → 127.0.0.1:8080
+  port: 8080
+
+spring:
+  application:
+    name: dbd-server
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 库 dbd（建库脚本见 src/main/resources/db/init.sql）
+    url: jdbc:mysql://localhost:3306/dbd?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8&allowPublicKeyRetrieval=true
+    username: root
+    password: ${DB_PASSWORD:1234}
+  data:
+    redis:
+      # 本机 Redis（会话/缓存/计数/秒杀均由 Redis 承载）
+      host: localhost
+      port: 6379
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 0
+
+mybatis-plus:
+  configuration:
+    # 下划线字段名自动映射驼峰属性（user_id -> userId）
+    map-underscore-to-camel-case: true
+    # 开发期打印 SQL，便于调试（上线可去掉）
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      # 主键由 Redis 全局 ID 生成器产生，禁用 MyBatis-Plus 默认雪花算法
+      id-type: none
+
+springdoc:
+  swagger-ui:
+    # Swagger UI 入口
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+  # 只扫描 /api 下接口
+  paths-to-match: /api/**
+
+logging:
+  level:
+    com.dbd: debug

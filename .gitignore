@@ -1,0 +1,20 @@
+# ===== 前端 =====
+node_modules/
+dist/
+*.local
+
+# ===== 后端 =====
+target/
+*.log
+run.err
+
+# ===== IDE / 系统 =====
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ===== 本地工具配置（reasonix 个人配置，不入库） =====
+.reasonix/
+reasonix.toml
