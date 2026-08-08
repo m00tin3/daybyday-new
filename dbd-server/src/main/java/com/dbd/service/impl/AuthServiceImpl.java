@@ -8,6 +8,7 @@ import com.dbd.entity.User;
 import com.dbd.mapper.UserMapper;
 import com.dbd.service.AuthService;
 import com.dbd.utils.RedisIdWorker;
+import com.dbd.utils.RedisKeyConstants;
 import com.dbd.utils.UserContext;
 import com.dbd.vo.UserVO;
 import lombok.extern.slf4j.Slf4j;
@@ -15,38 +16,18 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * 认证服务实现。
- * <p>Redis Key：</p>
- * <ul>
- *   <li>{@code dbd:verify:code:{phone}}    验证码（TTL 5 分钟）</li>
- *   <li>{@code dbd:verify:lock:{phone}}     防重发锁（TTL 60 秒，SETNX）</li>
- *   <li>{@code dbd:login:token:{token}}     token → userId（TTL 30 分钟，拦截器滑动续期）</li>
- * </ul>
- * <p>演示模式（app.sms.mock=true）：验证码固定 123456，不接真实短信通道；联调/面试演示可直接输入。</p>
+ * 认证服务：验证码 → 登录（未注册自动注册）→ token 会话。
+ * <p>演示模式（app.sms.mock=true，默认）：验证码固定 123456，不接真实短信通道。</p>
  */
 @Slf4j
 @Service
 public class AuthServiceImpl implements AuthService {
-
-    /** 验证码 Key 前缀 */
-    private static final String CODE_PREFIX = "dbd:verify:code:";
-
-    /** 防重发锁 Key 前缀 */
-    private static final String CODE_LOCK_PREFIX = "dbd:verify:lock:";
-
-    /** 登录 token Key 前缀（值为 userId） */
-    private static final String TOKEN_PREFIX = "dbd:login:token:";
-
-    private static final Duration CODE_TTL = Duration.ofMinutes(5);
-    private static final Duration CODE_LOCK_TTL = Duration.ofSeconds(60);
-    private static final Duration TOKEN_TTL = Duration.ofMinutes(30);
 
     private final StringRedisTemplate stringRedisTemplate;
     private final RedisIdWorker redisIdWorker;
@@ -69,40 +50,31 @@ public class AuthServiceImpl implements AuthService {
         if (!phone.matches("^1\\d{10}$")) {
             throw BusinessException.param("手机号格式不正确");
         }
-        // SETNX 防 60 秒内重复发送
+        // SETNX：60 秒内重复发送直接拒绝（原子，无并发问题）
         Boolean locked = stringRedisTemplate.opsForValue()
-                .setIfAbsent(CODE_LOCK_PREFIX + phone, "1", CODE_LOCK_TTL);
+                .setIfAbsent(RedisKeyConstants.VERIFY_CODE_LOCK + phone, "1", RedisKeyConstants.VERIFY_CODE_LOCK_TTL);
         if (Boolean.FALSE.equals(locked)) {
             throw BusinessException.tooFast("发送太频繁，请 60 秒后再试");
         }
-        // 演示模式固定验证码，生产模式生成 6 位随机数（接真实短信通道）
+        // 演示模式固定验证码，生产模式生成 6 位随机数并接入短信服务商
         String code = smsMock ? "123456" : String.format("%06d", ThreadLocalRandom.current().nextInt(1000000));
-        stringRedisTemplate.opsForValue().set(CODE_PREFIX + phone, code, CODE_TTL);
-        // 演示模式打日志方便排查；生产模式在此调用短信服务商 API
+        stringRedisTemplate.opsForValue().set(RedisKeyConstants.VERIFY_CODE + phone, code, RedisKeyConstants.VERIFY_CODE_TTL);
         log.info("验证码已生成 phone={}, code={}（mock={}）", phone, code, smsMock);
     }
 
     @Override
     public Map<String, Object> login(LoginDTO dto) {
         verifyCode(dto.getPhone(), dto.getCode());
-
-        User user = userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getPhone, dto.getPhone()));
-        if (user == null) {
-            user = createUser(dto.getPhone(), dto.getNickname());
-        }
-        return buildTokenResult(user);
+        return buildTokenResult(findOrCreate(dto.getPhone(), dto.getNickname()));
     }
 
     @Override
     public Map<String, Object> register(RegisterDTO dto) {
         verifyCode(dto.getPhone(), dto.getCode());
-
-        Long exists = userMapper.selectCount(new LambdaQueryWrapper<User>().eq(User::getPhone, dto.getPhone()));
-        if (exists != null && exists > 0) {
+        if (exists(dto.getPhone())) {
             throw new BusinessException("该手机号已注册，请直接登录");
         }
-        User user = createUser(dto.getPhone(), dto.getNickname());
-        return buildTokenResult(user);
+        return buildTokenResult(createUser(dto.getPhone(), dto.getNickname()));
     }
 
     @Override
@@ -118,9 +90,9 @@ public class AuthServiceImpl implements AuthService {
         return UserVO.from(user);
     }
 
-    /** 校验验证码：比对 Redis → 删除（一次性） */
+    /** 校验验证码：与 Redis 比对后即删（一次性使用） */
     private void verifyCode(String phone, String code) {
-        String key = CODE_PREFIX + phone;
+        String key = RedisKeyConstants.VERIFY_CODE + phone;
         String cached = stringRedisTemplate.opsForValue().get(key);
         if (cached == null) {
             throw BusinessException.codeError("验证码已过期，请重新获取");
@@ -131,7 +103,19 @@ public class AuthServiceImpl implements AuthService {
         stringRedisTemplate.delete(key);
     }
 
-    /** 首次登录自动注册（验证码模式无密码，password 存随机串） */
+    /** 登录专用：查用户，不存在则自动注册 */
+    private User findOrCreate(String phone, String nickname) {
+        User user = userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getPhone, phone));
+        return user != null ? user : createUser(phone, nickname);
+    }
+
+    /** 该手机号是否已注册 */
+    private boolean exists(String phone) {
+        Long count = userMapper.selectCount(new LambdaQueryWrapper<User>().eq(User::getPhone, phone));
+        return count != null && count > 0;
+    }
+
+    /** 注册用户：主键走全局 ID 生成器；验证码登录无密码，存随机串占位 */
     private User createUser(String phone, String nickname) {
         User user = new User();
         user.setId(redisIdWorker.nextId("user"));
@@ -147,8 +131,10 @@ public class AuthServiceImpl implements AuthService {
     /** 生成 token 并写 Redis（30 分钟，拦截器每次请求滑动续期） */
     private Map<String, Object> buildTokenResult(User user) {
         String token = UUID.randomUUID().toString().replace("-", "");
-        stringRedisTemplate.opsForValue().set(TOKEN_PREFIX + token, String.valueOf(user.getId()), TOKEN_TTL);
-
+        stringRedisTemplate.opsForValue().set(
+                RedisKeyConstants.LOGIN_TOKEN + token,
+                String.valueOf(user.getId()),
+                RedisKeyConstants.LOGIN_TOKEN_TTL);
         Map<String, Object> result = new HashMap<>();
         result.put("token", token);
         result.put("userInfo", UserVO.from(user));
