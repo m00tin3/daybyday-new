@@ -50,3 +50,10 @@ springdoc:
 logging:
   level:
     com.dbd: debug
+
+# ============ 应用自定义配置 ============
+app:
+  sms:
+    # 演示模式：验证码固定 123456，不接真实短信通道（联调/面试演示直接输入）
+    # 生产模式改为 false，并在 AuthServiceImpl 中接入短信服务商 API
+    mock: true

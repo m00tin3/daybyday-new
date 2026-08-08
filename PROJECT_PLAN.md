@@ -280,7 +280,7 @@ CREATE TABLE `activity_order` (
 ### 5.4 Redis Key 规范（初稿）
 统一前缀 `dbd:`，便于排查与过期管理：
 ```
-dbd:login:token:{userId}
+dbd:login:token:{token}    ← 值存 userId
 dbd:verify:code:{phone}
 dbd:post:cache:{postId}
 dbd:post:like:{postId}

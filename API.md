@@ -150,11 +150,11 @@
 `POST /api/auth/code`
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| phone | String | 是 | 11 位手机号 |
-| scene | String | 否 | 场景：login/register，默认 login |
+| phone | String | 是 | 11 位手机号（JSON body 字段） |
 
 - 成功：`{ "code": 1, "msg": "验证码已发送", "data": null }`
-- Redis：`dbd:verify:code:{phone}`，TTL 5 分钟；`SETNX` 限制 60 秒内重复发送 → code 3002
+- Redis：`dbd:verify:code:{phone}`，TTL 5 分钟；`dbd:verify:lock:{phone}` SETNX 限制 60 秒内重复发送 → code 3002
+- **演示模式**：`app.sms.mock=true`（默认）时验证码固定 `123456`，不接真实短信通道，联调/演示直接输入即可；生产模式改为 false 并接入短信服务商
 - 失败：手机号不合法 → 2001
 
 #### 3.1.2 验证码登录/注册
@@ -166,8 +166,8 @@
 | nickname | String | 否 | 首次登录自动注册时若未传，后端随机生成 |
 
 - 成功：`{ "code": 1, "msg": "ok", "data": { "token": "xxxx", "userInfo": { UserVO } } }`
-- 说明：手机号未注册则自动注册（验证码登录模式）；已注册直接登录
-- Redis：登录成功写入 `dbd:login:token:{userId}`（token 为 UUID，TTL 30 分钟，拦截器续期）；删除验证码 Key
+- 说明：手机号未注册则自动注册（验证码登录模式，昵称不传则后端生成「用户+尾号」）；已注册直接登录
+- Redis：`dbd:login:token:{token}`（token 为 UUID，值为 userId，TTL 30 分钟，拦截器滑动续期）；验证码一次性使用，登录成功后即删
 - 失败：验证码错误/过期 → 3001
 
 #### 3.1.3 注册（显式注册，可选实现）
