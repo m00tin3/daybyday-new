@@ -48,6 +48,12 @@
       <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
       <version>${mybatis-plus.version}</version>
     </dependency>
+    <!-- MP 3.5.9 起分页等依赖 jsqlparser 的拦截器拆分为独立模块 -->
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-jsqlparser</artifactId>
+      <version>${mybatis-plus.version}</version>
+    </dependency>
     <!-- MySQL 驱动（版本由 Spring Boot parent 管理） -->
     <dependency>
       <groupId>com.mysql</groupId>

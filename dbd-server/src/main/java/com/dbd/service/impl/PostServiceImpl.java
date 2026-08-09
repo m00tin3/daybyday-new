@@ -1,0 +1,445 @@
+package com.dbd.service.impl;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.dbd.common.BusinessException;
+import com.dbd.common.PageResult;
+import com.dbd.dto.CommentDTO;
+import com.dbd.dto.PostDTO;
+import com.dbd.entity.Bar;
+import com.dbd.entity.Comment;
+import com.dbd.entity.Post;
+import com.dbd.entity.PostFavorite;
+import com.dbd.entity.PostLike;
+import com.dbd.entity.User;
+import com.dbd.mapper.BarMapper;
+import com.dbd.mapper.CommentMapper;
+import com.dbd.mapper.PostFavoriteMapper;
+import com.dbd.mapper.PostLikeMapper;
+import com.dbd.mapper.PostMapper;
+import com.dbd.mapper.UserMapper;
+import com.dbd.service.PostService;
+import com.dbd.utils.RedisIdWorker;
+import com.dbd.utils.RedisKeyConstants;
+import com.dbd.utils.UserContext;
+import com.dbd.vo.CommentVO;
+import com.dbd.vo.PostRow;
+import com.dbd.vo.PostVO;
+import com.dbd.vo.UserVO;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Service;
+
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * 帖子服务实现。Redis 技术点（对应 PROJECT_PLAN.md §5.1 模块 2/3/4）：
+ * <ul>
+ *   <li>详情缓存三件套：空值缓存（防穿透）+ 互斥锁重建（防击穿）+ 随机 TTL（防雪崩）</li>
+ *   <li>首页列表缓存 + 发帖后删除（保持数据一致性）</li>
+ *   <li>点赞/收藏：Set 判重与计数，DB 同步落库兜底（唯一索引防重）</li>
+ *   <li>楼层号：Redis INCR 全局唯一；防重复提交：SETNX 3 秒</li>
+ *   <li>浏览/UV：INCR 计数 + HyperLogLog（详情命中缓存时实时覆盖返回）</li>
+ * </ul>
+ */
+@Slf4j
+@Service
+public class PostServiceImpl implements PostService {
+
+    private final PostMapper postMapper;
+    private final CommentMapper commentMapper;
+    private final PostLikeMapper postLikeMapper;
+    private final PostFavoriteMapper postFavoriteMapper;
+    private final UserMapper userMapper;
+    private final BarMapper barMapper;
+    private final StringRedisTemplate stringRedisTemplate;
+    private final RedisIdWorker redisIdWorker;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /** 详情缓存基础 TTL：10 分钟 + 0~5 分钟随机偏移（防雪崩） */
+    private static final Duration CACHE_TTL = Duration.ofMinutes(10);
+    private static final long CACHE_TTL_JITTER = 5 * 60;
+    /** 空值缓存 TTL：5 分钟（防穿透，DB 没有的数据短暂缓存"空"） */
+    private static final Duration EMPTY_TTL = Duration.ofMinutes(5);
+    /** 重建缓存互斥锁 TTL：10 秒 */
+    private static final Duration LOCK_TTL = Duration.ofSeconds(10);
+    /** 首页列表缓存 TTL：60 秒 */
+    private static final Duration LIST_TTL = Duration.ofSeconds(60);
+
+    public PostServiceImpl(PostMapper postMapper, CommentMapper commentMapper,
+                           PostLikeMapper postLikeMapper, PostFavoriteMapper postFavoriteMapper,
+                           UserMapper userMapper, BarMapper barMapper,
+                           StringRedisTemplate stringRedisTemplate, RedisIdWorker redisIdWorker) {
+        this.postMapper = postMapper;
+        this.commentMapper = commentMapper;
+        this.postLikeMapper = postLikeMapper;
+        this.postFavoriteMapper = postFavoriteMapper;
+        this.userMapper = userMapper;
+        this.barMapper = barMapper;
+        this.stringRedisTemplate = stringRedisTemplate;
+        this.redisIdWorker = redisIdWorker;
+    }
+
+    /* ==================== 列表 ==================== */
+
+    @Override
+    public PageResult<PostVO> page(Long barId, Long userId, String keyword, Integer page, Integer size) {
+        page = page == null || page < 1 ? 1 : page;
+        size = size == null || size < 1 ? 10 : Math.min(size, 50);
+
+        // 首页（无筛选条件）走列表缓存，降低 DB 压力
+        if (barId == null && userId == null && (keyword == null || keyword.isBlank())) {
+            String cacheKey = RedisKeyConstants.POST_LIST_HOME + page;
+            String cached = stringRedisTemplate.opsForValue().get(cacheKey);
+            if (cached != null) {
+                return parsePage(cached, page, size);
+            }
+            PageResult<PostVO> result = queryPage(null, null, null, page, size);
+            stringRedisTemplate.opsForValue().set(cacheKey, serialize(result), LIST_TTL);
+            return result;
+        }
+        return queryPage(barId, userId, keyword, page, size);
+    }
+
+    private PageResult<PostVO> queryPage(Long barId, Long userId, String keyword, Integer page, Integer size) {
+        IPage<PostRow> rows = postMapper.selectPostPage(new Page<>(page, size), barId, userId, keyword);
+        List<PostVO> list = rows.getRecords().stream().map(PostVO::fromRow).toList();
+        return PageResult.of(list, rows.getTotal(), page, size);
+    }
+
+    /* ==================== 详情（缓存三件套） ==================== */
+
+    @Override
+    public PostVO detail(Long id) {
+        PostVO vo = readCache(id);
+        if (vo != null) {
+            fillRequestState(id, vo);
+            return vo;
+        }
+        // 击穿兜底：只允许一个线程重建缓存，其余等待后直查 DB（保证可用性）
+        if (tryLock(id)) {
+            try {
+                vo = readCache(id);
+                if (vo == null) {
+                    vo = buildDetail(id);
+                    writeCache(id, vo);
+                }
+            } finally {
+                unlock(id);
+            }
+        } else {
+            sleep(50);
+            vo = buildDetail(id);
+        }
+        fillRequestState(id, vo);
+        return vo;
+    }
+
+    /** 读缓存：null=未缓存；空字符串=DB 无此帖（空值缓存，防穿透） */
+    private PostVO readCache(Long id) {
+        String cached = stringRedisTemplate.opsForValue().get(RedisKeyConstants.POST_CACHE + id);
+        if (cached == null) {
+            return null;
+        }
+        if (cached.isEmpty()) {
+            throw BusinessException.notFound("帖子不存在");
+        }
+        try {
+            return objectMapper.readValue(cached, PostVO.class);
+        } catch (JsonProcessingException e) {
+            log.warn("帖子缓存反序列化失败 postId={}", id, e);
+            stringRedisTemplate.delete(RedisKeyConstants.POST_CACHE + id);
+            return null;
+        }
+    }
+
+    /** 写缓存：无帖子缓存空串（5 分钟）；有帖子缓存随机 TTL（10+0~5 分钟，防雪崩） */
+    private void writeCache(Long id, PostVO vo) {
+        String key = RedisKeyConstants.POST_CACHE + id;
+        if (vo == null) {
+            stringRedisTemplate.opsForValue().set(key, "", EMPTY_TTL);
+            return;
+        }
+        long ttl = CACHE_TTL.toSeconds() + ThreadLocalRandom.current().nextLong(CACHE_TTL_JITTER);
+        try {
+            stringRedisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(vo), Duration.ofSeconds(ttl));
+        } catch (JsonProcessingException e) {
+            log.warn("帖子缓存序列化失败 postId={}", id, e);
+        }
+    }
+
+    /** 重建详情：DB 查询帖子 + 作者 + 吧名；帖子不存在返回 null */
+    private PostVO buildDetail(Long id) {
+        Post post = postMapper.selectById(id);
+        if (post == null || post.getStatus() == 0) {
+            return null;
+        }
+        User author = userMapper.selectById(post.getUserId());
+        Bar bar = barMapper.selectById(post.getBarId());
+        return PostVO.from(post, author, bar == null ? null : bar.getName());
+    }
+
+    /** 互斥锁：SETNX 抢占，重建完成后释放 */
+    private boolean tryLock(Long id) {
+        Boolean ok = stringRedisTemplate.opsForValue()
+                .setIfAbsent(RedisKeyConstants.POST_CACHE + id + ":lock", "1", LOCK_TTL);
+        return Boolean.TRUE.equals(ok);
+    }
+
+    private void unlock(Long id) {
+        stringRedisTemplate.delete(RedisKeyConstants.POST_CACHE + id + ":lock");
+    }
+
+    /** 请求级状态：当前用户是否点赞/收藏（实时查 Redis），浏览/UV 计数 */
+    private void fillRequestState(Long id, PostVO vo) {
+        if (vo == null) {
+            return;
+        }
+        Long userId = UserContext.get();
+        if (userId != null) {
+            vo.setIsLiked(isMember(RedisKeyConstants.POST_LIKE, id, userId));
+            vo.setIsFavorited(isMember(RedisKeyConstants.POST_FAVORITE, id, userId));
+        } else {
+            vo.setIsLiked(false);
+            vo.setIsFavorited(false);
+        }
+        countView(id, vo);
+    }
+
+    /** 浏览 +1、UV 去重计数（HyperLogLog），并把最新计数覆盖到返回的 VO 上 */
+    private void countView(Long id, PostVO vo) {
+        String visitor = UserContext.get() == null ? "guest" : String.valueOf(UserContext.get());
+        stringRedisTemplate.opsForHyperLogLog().add(RedisKeyConstants.POST_UV + id, visitor);
+        Long views = stringRedisTemplate.opsForValue().increment(RedisKeyConstants.POST_VIEW + id);
+        if (views != null) {
+            vo.setViewCount(views);
+        }
+        Long uv = stringRedisTemplate.opsForHyperLogLog().size(RedisKeyConstants.POST_UV + id);
+        vo.setUvCount(uv);
+    }
+
+    /* ==================== 发帖 ==================== */
+
+    @Override
+    public Long create(PostDTO dto) {
+        Long userId = UserContext.get();
+        if (barMapper.selectById(dto.getBarId()) == null) {
+            throw BusinessException.notFound("吧不存在");
+        }
+        // 防重复提交：SETNX 3 秒内同一用户只能发一帖（双击/连点兜底）
+        Boolean locked = stringRedisTemplate.opsForValue()
+                .setIfAbsent(RedisKeyConstants.REPEAT_POST + userId, "1", RedisKeyConstants.REPEAT_POST_TTL);
+        if (Boolean.FALSE.equals(locked)) {
+            throw BusinessException.tooFast("操作太快，请稍后再试");
+        }
+        Post post = new Post();
+        post.setId(redisIdWorker.nextId("post"));
+        post.setBarId(dto.getBarId());
+        post.setUserId(userId);
+        post.setTitle(dto.getTitle());
+        post.setContent(dto.getContent());
+        post.setImages(serializeImages(dto.getImages()));
+        post.setStatus(1);
+        post.setIsTop(0);
+        post.setLikeCount(0);
+        post.setFavoriteCount(0);
+        post.setCommentCount(0);
+        post.setViewCount(0);
+        post.setUvCount(0);
+        postMapper.insert(post);
+        // 发帖后删首页列表缓存，下次请求重新查库（简单一致性，生产可升级延迟双删）
+        deleteHomeListCache();
+        return post.getId();
+    }
+
+    /* ==================== 点赞 / 收藏 ==================== */
+
+    @Override
+    public Map<String, Object> like(Long postId) {
+        requirePost(postId);
+        Long userId = UserContext.get();
+        return toggleMember(RedisKeyConstants.POST_LIKE, postId, userId,
+                () -> {
+                    PostLike row = new PostLike();
+                    row.setId(redisIdWorker.nextId("like"));
+                    row.setPostId(postId);
+                    row.setUserId(userId);
+                    postLikeMapper.insert(row);
+                },
+                () -> postLikeMapper.delete(new LambdaQueryWrapper<PostLike>()
+                        .eq(PostLike::getPostId, postId).eq(PostLike::getUserId, userId)),
+                "isLiked");
+    }
+
+    @Override
+    public Map<String, Object> favorite(Long postId) {
+        requirePost(postId);
+        Long userId = UserContext.get();
+        return toggleMember(RedisKeyConstants.POST_FAVORITE, postId, userId,
+                () -> {
+                    PostFavorite row = new PostFavorite();
+                    row.setId(redisIdWorker.nextId("favorite"));
+                    row.setPostId(postId);
+                    row.setUserId(userId);
+                    postFavoriteMapper.insert(row);
+                },
+                () -> postFavoriteMapper.delete(new LambdaQueryWrapper<PostFavorite>()
+                        .eq(PostFavorite::getPostId, postId).eq(PostFavorite::getUserId, userId)),
+                "isFavorited");
+    }
+
+    /**
+     * 点赞/收藏通用切换：Set 判断 → 增删 + DB 落库兜底，返回 { 状态键: bool, count键: count }。
+     */
+    private Map<String, Object> toggleMember(String setKey, Long postId, Long userId,
+                                             Runnable onInsert, Runnable onDelete, String activeKey) {
+        String member = String.valueOf(userId);
+        boolean isActive = Boolean.TRUE.equals(stringRedisTemplate.opsForSet().isMember(setKey + postId, member));
+        if (isActive) {
+            stringRedisTemplate.opsForSet().remove(setKey + postId, member);
+            onDelete.run();
+        } else {
+            stringRedisTemplate.opsForSet().add(setKey + postId, member);
+            onInsert.run();
+        }
+        Long count = stringRedisTemplate.opsForSet().size(setKey + postId);
+        Map<String, Object> result = new HashMap<>();
+        result.put(activeKey, !isActive);
+        result.put(activeKey.equals("isLiked") ? "likeCount" : "favoriteCount", count);
+        return result;
+    }
+
+    /* ==================== 楼层 ==================== */
+
+    @Override
+    public PageResult<CommentVO> comments(Long postId, Integer page, Integer size) {
+        page = page == null || page < 1 ? 1 : page;
+        size = size == null || size < 1 ? 10 : Math.min(size, 50);
+        requirePost(postId);
+
+        IPage<Comment> rows = commentMapper.selectPage(new Page<>(page, size),
+                new LambdaQueryWrapper<Comment>()
+                        .eq(Comment::getPostId, postId)
+                        .isNull(Comment::getParentId)
+                        .eq(Comment::getStatus, 1)
+                        .orderByAsc(Comment::getFloorNo));
+        List<Comment> records = rows.getRecords();
+        // 批量查作者，避免逐条 N+1
+        Map<Long, User> userMap = records.isEmpty() ? Map.of()
+                : userMapper.selectBatchIds(records.stream().map(Comment::getUserId).distinct().toList())
+                        .stream().collect(java.util.stream.Collectors.toMap(User::getId, u -> u));
+        List<CommentVO> list = new ArrayList<>();
+        for (Comment c : records) {
+            list.add(CommentVO.from(c, userMap.get(c.getUserId())));
+        }
+        return PageResult.of(list, rows.getTotal(), page, size);
+    }
+
+    @Override
+    public Map<String, Object> addComment(Long postId, CommentDTO dto) {
+        Long userId = UserContext.get();
+        requirePost(postId);
+        if (dto.getParentId() != null && commentMapper.selectById(dto.getParentId()) == null) {
+            throw BusinessException.notFound("所回复的楼层不存在");
+        }
+        // 防重复提交：SETNX 3 秒内同一用户只能回一楼（先校验后上锁，校验失败不占锁）
+        Boolean locked = stringRedisTemplate.opsForValue()
+                .setIfAbsent(RedisKeyConstants.REPEAT_COMMENT + userId, "1", RedisKeyConstants.REPEAT_COMMENT_TTL);
+        if (Boolean.FALSE.equals(locked)) {
+            throw BusinessException.tooFast("操作太快，请稍后再试");
+        }
+        // 楼层号：Redis INCR，帖内从 1 递增（全局唯一、不依赖数据库）
+        Long floorNo = stringRedisTemplate.opsForValue()
+                .increment(RedisKeyConstants.POST_FLOOR + postId);
+        Comment comment = new Comment();
+        comment.setId(redisIdWorker.nextId("comment"));
+        comment.setPostId(postId);
+        comment.setUserId(userId);
+        comment.setFloorNo(floorNo.intValue());
+        comment.setContent(dto.getContent());
+        comment.setParentId(dto.getParentId());
+        comment.setLikeCount(0);
+        comment.setStatus(1);
+        commentMapper.insert(comment);
+        // 帖子楼层数 +1、最后回复时间更新（DB），并删详情/首页缓存保持新鲜
+        Post post = new Post();
+        post.setId(postId);
+        post.setCommentCount((int) (postMapper.selectById(postId).getCommentCount() + 1));
+        post.setLastCommentTime(LocalDateTime.now());
+        postMapper.updateById(post);
+        deleteCache(postId);
+        deleteHomeListCache();
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", comment.getId());
+        result.put("floorNo", floorNo);
+        return result;
+    }
+
+    /* ==================== 工具 ==================== */
+
+    private void requirePost(Long postId) {
+        Post post = postMapper.selectById(postId);
+        if (post == null || post.getStatus() == 0) {
+            throw BusinessException.notFound("帖子不存在");
+        }
+    }
+
+    private boolean isMember(String setKey, Long postId, Long userId) {
+        return Boolean.TRUE.equals(stringRedisTemplate.opsForSet().isMember(setKey + postId, String.valueOf(userId)));
+    }
+
+    private void deleteCache(Long postId) {
+        stringRedisTemplate.delete(RedisKeyConstants.POST_CACHE + postId);
+    }
+
+    private void deleteHomeListCache() {
+        for (int p = 1; p <= 5; p++) {
+            stringRedisTemplate.delete(RedisKeyConstants.POST_LIST_HOME + p);
+        }
+    }
+
+    private String serializeImages(List<String> images) {
+        if (images == null || images.isEmpty()) {
+            return "[]";
+        }
+        return "[\"" + String.join("\",\"", images) + "\"]";
+    }
+
+    private String serialize(Object obj) {
+        try {
+            return objectMapper.writeValueAsString(obj);
+        } catch (JsonProcessingException e) {
+            log.warn("序列化失败", e);
+            return "[]";
+        }
+    }
+
+    private PageResult<PostVO> parsePage(String json, Integer page, Integer size) {
+        try {
+            return objectMapper.readValue(json,
+                    objectMapper.getTypeFactory().constructParametricType(PageResult.class, PostVO.class));
+        } catch (JsonProcessingException e) {
+            log.warn("列表缓存反序列化失败", e);
+            return PageResult.of(List.of(), 0L, page, size);
+        }
+    }
+
+    private void sleep(long millis) {
+        try {
+            TimeUnit.MILLISECONDS.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+}

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.dbd.mapper.PostMapper">
+
+    <!-- 帖子列表：联表补全吧名/作者，置顶优先 → 最后回复时间倒序 -->
+    <select id="selectPostPage" resultType="com.dbd.vo.PostRow">
+        SELECT p.id, p.bar_id, p.user_id, p.title, p.content, p.is_top,
+               p.like_count, p.favorite_count, p.comment_count, p.view_count,
+               p.created_at, p.last_comment_time,
+               b.name AS bar_name,
+               u.nickname AS author_nickname, u.icon AS author_icon
+        FROM post p
+        JOIN bar b ON p.bar_id = b.id
+        JOIN `user` u ON p.user_id = u.id
+        WHERE p.status = 1
+        <if test="barId != null">
+            AND p.bar_id = #{barId}
+        </if>
+        <if test="userId != null">
+            AND p.user_id = #{userId}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (p.title LIKE CONCAT('%', #{keyword}, '%') OR p.content LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+        ORDER BY p.is_top DESC, p.last_comment_time DESC, p.created_at DESC
+    </select>
+
+</mapper>

@@ -28,6 +28,8 @@ spring:
           min-idle: 0
 
 mybatis-plus:
+  # Mapper XML 位置（PostMapper.xml 等）
+  mapper-locations: classpath:mapper/*.xml
   configuration:
     # 下划线字段名自动映射驼峰属性（user_id -> userId）
     map-underscore-to-camel-case: true
