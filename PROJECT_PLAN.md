@@ -277,20 +277,45 @@ CREATE TABLE `activity_order` (
 > - `activity_order.uk_activity_user` 唯一索引 + Lua 预扣库存，双保险实现"一人一单"；
 > - 关注 Feed 流由 `follow` 表驱动，新帖写入 `dbd:feed:{userId}` ZSet；同城 GEO 数据由 `bar`/`post` 的坐标字段另行扩展（或独立 `nearby_post` 表，阶段三定）。
 
-### 5.4 Redis Key 规范（初稿）
+### 5.4 Redis Key 规范（全量规划，✅ = 已实现，实现统一维护于 `RedisKeyConstants`）
+
 统一前缀 `dbd:`，便于排查与过期管理：
+
 ```
-dbd:login:token:{token}    ← 值存 userId
-dbd:verify:code:{phone}
-dbd:post:cache:{postId}
-dbd:post:like:{postId}
-dbd:post:uv:{postId}
-dbd:rank:hot:post
-dbd:sign:{userId}:{yyyyMM}
-dbd:feed:user:{userId}
-dbd:geo:bar:{barId}
-dbd:seckill:stock:{activityId}
-dbd:seckill:order:{activityId}:{userId}
+# ===== 认证（✅） =====
+dbd:verify:code:{phone}           验证码，TTL 5min
+dbd:verify:lock:{phone}           防重发锁，TTL 60s（SETNX）
+dbd:login:token:{token}           登录会话，值存 userId，TTL 30min（拦截器滑动续期）
+
+# ===== 帖子（✅） =====
+dbd:id:post|user|comment|...:{yyyy:MM:dd}   全局 ID 生成器（时间戳+自增）
+dbd:post:cache:{postId}           详情缓存（空值防穿透 + 随机 TTL 防雪崩）
+dbd:post:cache:{postId}:lock      详情重建互斥锁（防击穿，TTL 10s）
+dbd:post:list:home:{page}         首页列表缓存，TTL 60s
+dbd:post:like:{postId}            点赞 Set（DB 落库兜底）
+dbd:post:favorite:{postId}        收藏 Set（DB 落库兜底）
+dbd:post:floor:{postId}           楼层号 INCR
+dbd:post:uv:{postId}              独立访客 HyperLogLog
+dbd:post:view:{postId}            浏览量 INCR
+dbd:repeat:post:{userId}          发帖防重复，TTL 3s（SETNX）
+dbd:repeat:comment:{userId}       回帖防重复，TTL 3s（SETNX）
+
+# ===== 吧（阶段二） =====
+dbd:bar:cache:{barId}             吧信息缓存
+dbd:bar:member:{barId}            关注人数计数
+dbd:sign:{userId}:{yyyyMM}        签到 BitMap
+dbd:rank:hot:bar                  热吧榜 ZSet
+dbd:rank:hot:post                 热帖榜 ZSet
+dbd:search:hot                    热搜词 ZSet
+
+# ===== 用户/Feed/同城（阶段二/三） =====
+dbd:user:cache:{userId}           用户信息缓存
+dbd:feed:user:{userId}            关注 Feed 流 ZSet
+dbd:geo:post                      同城 GEO
+
+# ===== 秒杀（阶段三） =====
+dbd:seckill:stock:{activityId}    库存预扣
+dbd:seckill:order:{activityId}:{userId}   一人一单标记
 ```
 
 ### 5.5 接口文档
@@ -302,12 +327,12 @@ dbd:seckill:order:{activityId}:{userId}
 
 ## 6. 分阶段实施路线
 
-| 阶段 | 内容 | 里程碑 |
-|---|---|---|
-| 阶段一（基础） | 前后端骨架 + 验证码登录 + 帖子 CRUD + 缓存三件套 + 点赞/收藏 | 全栈跑通：首页/详情/发帖/登录可用 |
-| 阶段二（亮点） | 签到 BitMap + UV 统计 + 热帖/热吧榜 + 热搜 | 榜单与统计上线 |
-| 阶段三（进阶） | **抢楼/徽章秒杀（必做）** + 关注 Feed 流 + 同城 GEO | 高并发场景完整 |
-| 阶段四（收尾） | 打包部署：nginx + 免费服务器 + README + 演示数据 | 可演示、可上线 |
+| 阶段 | 内容 | 里程碑 | 状态 |
+|---|---|---|---|
+| 阶段一（基础） | 前后端骨架 + 验证码登录 + 帖子 CRUD + 缓存三件套 + 点赞/收藏 | 全栈跑通：首页/详情/发帖/登录可用 | ✅ 已完成 |
+| 阶段二（亮点） | 签到 BitMap + UV 统计 + 热帖/热吧榜 + 热搜 + 吧主页/用户中心 | 榜单与统计上线 | ⏳ 进行中 |
+| 阶段三（进阶） | **抢楼/徽章秒杀（必做）** + 关注 Feed 流 + 同城 GEO | 高并发场景完整 | |
+| 阶段四（收尾） | 打包部署：nginx + 免费服务器 + README + 演示数据 | 可演示、可上线 | |
 
 ---
 

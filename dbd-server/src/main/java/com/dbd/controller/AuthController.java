@@ -4,9 +4,11 @@ import com.dbd.common.Result;
 import com.dbd.dto.LoginDTO;
 import com.dbd.dto.RegisterDTO;
 import com.dbd.service.AuthService;
+import com.dbd.utils.UserContext;
 import com.dbd.vo.UserVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -50,9 +52,13 @@ public class AuthController {
         return Result.ok(authService.register(dto));
     }
 
-    @Operation(summary = "当前登录用户信息 🔒")
+    @Operation(summary = "当前登录用户信息 🔒（特例：GET 接口未登录也返回 401）")
     @GetMapping("/me")
-    public Result<UserVO> me() {
+    public Result<UserVO> me(HttpServletResponse response) {
+        if (UserContext.get() == null) {
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            return Result.fail(-1, "未登录");
+        }
         return Result.ok(authService.me());
     }
 }

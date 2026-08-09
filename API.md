@@ -33,8 +33,9 @@
   ```
   Authorization: Bearer <token>
   ```
-- 拦截器校验 token，命中即续期（滑动过期，默认 30 分钟，可配）
-- 标记 🔒 的接口必须携带有效 token，否则返回 HTTP 401
+- **拦截器规则（当前实现）**：GET 读请求公开放行（论坛"读公开"语义）；POST 等写操作必须携带有效 token，命中即续期（滑动过期 30 分钟），否则返回 HTTP 401
+- 标记 🔒 的接口为写操作或需本人信息，必须携带有效 token
+- 特例：`GET /api/auth/me` 虽为 GET，但未登录时由 Controller 手动返回 HTTP 401（登录态信息接口）
 
 ### 1.4 分页
 请求参数统一 `page`（从 1 开始）、`size`（默认 10，最大 50）。
@@ -181,7 +182,7 @@
 - 成功：`{ "code": 1, "msg": "ok", "data": { "token": "xxxx", "userInfo": { UserVO } } }`
 - 失败：手机号已注册 → 0（msg「该手机号已注册」）；验证码错误 → 3001
 
-#### 3.1.4 当前登录用户信息 🔒
+#### 3.1.4 当前登录用户信息 🔒（特例：GET 接口未登录也返回 401）
 `GET /api/auth/me`
 - 成功：`{ "code": 1, "msg": "ok", "data": { UserVO } }`
 - 失败：HTTP 401（未登录）
@@ -202,13 +203,13 @@
 
 - 成功：`{ "code": 1, "data": { "list": [ PostVO ], "total": Long, "page": 1, "size": 10 } }`
 - 排序：置顶优先 → `lastCommentTime` 倒序（首页）；吧内同规则
-- Redis：首页列表缓存三件套 + 延迟双删（`dbd:post:cache:list:home:{page}`）；写操作后删缓存
+- Redis：首页（无筛选条件）走列表缓存 `dbd:post:list:home:{page}`（TTL 60 秒），发帖后删除；带筛选条件直查 MySQL。生产可升级"延迟双删"保证一致性
 - 失败：无 → 空列表
 
 #### 3.2.2 帖子详情
 `GET /api/post/{id}`
-- 成功：`{ "code": 1, "data": { PostVO 全文 } }`；浏览数 +1（`dbd:post:uv:{id}` HyperLogLog 记 UV、`viewCount` 计数）
-- Redis：`dbd:post:cache:{id}` 缓存三件套（空值缓存防穿透、逻辑过期防击穿、随机 TTL 防雪崩）
+- 成功：`{ "code": 1, "data": { PostVO 全文 } }`；浏览数 +1（`dbd:post:uv:{id}` HyperLogLog 记 UV、`dbd:post:view:{id}` INCR 计数，命中缓存时实时覆盖返回）
+- Redis：`dbd:post:cache:{id}` 缓存三件套（**空值缓存防穿透** + **互斥锁重建防击穿** + **随机 TTL 防雪崩**，实现见 PostServiceImpl）
 - 失败：不存在/已删除 → 2002
 
 #### 3.2.3 发帖 🔒
@@ -221,19 +222,19 @@
 | images | String[] | 否 | 图片 URL 列表 |
 
 - 成功：`{ "code": 1, "msg": "发布成功", "data": { "id": Long } }`
-- Redis：ID 生成（时间戳 + `dbd:id:post` 自增）；防重复提交 `SETNX dbd:repeat:post:{userId}`（3 秒）→ 3002；发布后删除相关列表缓存
+- Redis：ID 生成（`dbd:id:post:{yyyy:MM:dd}` 时间戳 + 自增）；防重复提交 `SETNX dbd:repeat:post:{userId}`（3 秒，先校验后上锁）→ 3002；发布后删除列表缓存
 - 失败：参数不合法 → 2001；吧不存在 → 2002
 
 #### 3.2.4 点赞/取消点赞 🔒
 `POST /api/post/{id}/like`
 - 成功：`{ "code": 1, "data": { "isLiked": true, "likeCount": 12 } }`（幂等：已赞则取消，未赞则点赞）
-- Redis：`dbd:post:like:{id}` Set（SISMEMBER 判断 + 计数）；异步落库 `post_like` 表
+- Redis：`dbd:post:like:{id}` Set（SISMEMBER 判断 + SCARD 计数）为准；**同步落库** `post_like` 表兜底（唯一索引 `uk_post_user` 防重）
 - 失败：帖子不存在 → 2002
 
 #### 3.2.5 收藏/取消收藏 🔒
 `POST /api/post/{id}/favorite`
 - 成功：`{ "code": 1, "data": { "isFavorited": true, "favoriteCount": 5 } }`（幂等切换）
-- Redis：`dbd:post:favorite:{id}` Set；异步落库 `post_favorite` 表
+- Redis：`dbd:post:favorite:{id}` Set 为准；**同步落库** `post_favorite` 表兜底（唯一索引防重）
 
 #### 3.2.6 楼层列表
 `GET /api/post/{id}/comments`
@@ -243,7 +244,7 @@
 | size | Integer | 否 | 默认 10（最大 50） |
 
 - 成功：`{ "code": 1, "data": { "list": [ CommentVO 按 floorNo 升序 ], "total": Long, "page": 1, "size": 10 } }`
-- 楼中楼：父楼层下嵌套 `replies: [CommentVO]`（`parentId` 非空，最多展示前 5 条，总数用 `replyCount`）
+- 楼中楼：**当前版本仅返回直接楼层**（`parentId = null`）；楼中楼回复已落库（`parentId` 非空），嵌套组装（replies 前 5 条 + replyCount）待迭代实现
 
 #### 3.2.7 回帖/盖楼 🔒
 `POST /api/post/{id}/comment`
@@ -253,7 +254,7 @@
 | parentId | Long | 否 | 楼中楼父楼层ID |
 
 - 成功：`{ "code": 1, "msg": "盖楼成功", "data": { "id": Long, "floorNo": 3 } }`
-- Redis：楼层号 = `INCR dbd:post:floor:{postId}`（同 `comment.floor_no`）；防重复提交 `SETNX dbd:repeat:comment:{userId}` → 3002；帖子 `commentCount` +1；更新 `lastCommentTime`；异步落库
+- Redis：楼层号 = `INCR dbd:post:floor:{postId}`（同 `comment.floor_no`）；防重复提交 `SETNX dbd:repeat:comment:{userId}`（3 秒，先校验后上锁）→ 3002；帖子 `commentCount` +1；更新 `lastCommentTime`；同步落库；删除详情/列表缓存
 - 失败：帖子不存在 → 2002；父楼层不存在 → 2002
 
 ---
@@ -416,7 +417,7 @@
 | `auth.sendCode` | /api/auth/code | POST | - |
 | `auth.loginByCode` | /api/auth/login | POST | - |
 | `auth.register` | /api/auth/register | POST | - |
-| `auth.getUserInfo` | /api/auth/me | GET | 🔒 |
+| `auth.getUserInfo` | /api/auth/me | GET | 🔒（特例：未登录返回 401） |
 | `post.getPostList` | /api/post/list | GET | - |
 | `post.getPostDetail` | /api/post/{id} | GET | - |
 | `post.createPost` | /api/post | POST | 🔒 |
@@ -443,17 +444,19 @@
 
 ---
 
-## 5. 后端实现顺序建议（对应计划书阶段）
+## 5. 后端实现顺序（对应计划书阶段）
 
-| 顺序 | 内容 | 说明 |
-|---|---|---|
-| 1 | 骨架：Spring Boot 3 + MyBatis-Plus + 统一响应 + 全局异常 + 拦截器 | 先跑通 401 链路 |
-| 2 | 认证：验证码登录 + 全局 ID 生成器 | 解锁所有 🔒 接口 |
-| 3 | 帖子：发帖/列表/详情/楼层（缓存三件套 + 延迟双删） | 阶段一主线 |
-| 4 | 点赞/收藏 + 异步落库 | 阶段一收尾 |
-| 5 | 吧：吧信息/签到 BitMap/热吧榜 ZSet/UV HyperLogLog | 阶段二 |
-| 6 | 用户中心 + 搜索热搜 | 阶段二收尾 |
-| 7 | 秒杀 Lua 脚本 + Feed 流 + GEO 同城 | 阶段三 |
-| 8 | 演示数据 + 部署（nginx 已就绪） | 阶段四 |
+> ✅ = 已完成并提交
 
-> 数据库建表 SQL 见 PROJECT_PLAN.md §5.3（库名 `dbd`）。
+| 顺序 | 内容 | 说明 | 状态 |
+|---|---|---|---|
+| 1 | 骨架：Spring Boot 3 + MyBatis-Plus + 统一响应 + 全局异常 + 拦截器 | 先跑通 401 链路 | ✅ |
+| 2 | 认证：验证码登录 + 全局 ID 生成器 | 解锁所有 🔒 接口 | ✅ |
+| 3 | 帖子：发帖/列表/详情/楼层（缓存三件套） | 阶段一主线 | ✅ |
+| 4 | 点赞/收藏 + 落库兜底 | 阶段一收尾 | ✅ |
+| 5 | 吧：吧信息/签到 BitMap/热吧榜 ZSet/关注 | 阶段二 | |
+| 6 | 用户中心 + UV 统计 + 热搜 | 阶段二收尾 | |
+| 7 | 秒杀 Lua 脚本 + Feed 流 + GEO 同城 | 阶段三 | |
+| 8 | 演示数据 + 部署（nginx 已就绪） | 阶段四 | |
+
+> 数据库建表 SQL 见 `dbd-server/src/main/resources/db/init.sql`（库名 `dbd`，9 张表 + 种子数据）。
