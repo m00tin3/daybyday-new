@@ -33,7 +33,9 @@
   ```
   Authorization: Bearer <token>
   ```
-- **拦截器规则（当前实现）**：GET 读请求公开放行（论坛"读公开"语义）；POST 等写操作必须携带有效 token，命中即续期（滑动过期 30 分钟），否则返回 HTTP 401
+- **拦截器规则（当前实现）**：
+  - GET 读请求**可选登录**：带有效 token 则解析出当前用户（请求级状态 `isLiked`/`isFollowed`/`signedToday` 才生效），不带则以匿名身份放行（论坛"读公开"语义）
+  - POST 等写操作**必须登录**：token 命中即续期（滑动过期 30 分钟），否则返回 HTTP 401
 - 标记 🔒 的接口为写操作或需本人信息，必须携带有效 token
 - 特例：`GET /api/auth/me` 虽为 GET，但未登录时由 Controller 手动返回 HTTP 401（登录态信息接口）
 

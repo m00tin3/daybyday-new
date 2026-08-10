@@ -9,10 +9,15 @@ import org.springframework.web.servlet.HandlerInterceptor;
 import java.time.Duration;
 
 /**
- * 登录态拦截器（🔒 写操作）。
- * <p>规则：GET 读请求公开放行（论坛读公开）；POST 等写操作取 {@code Authorization: Bearer <token>}
- * → 查 Redis {@code dbd:login:token:<token>} → 命中则写入 {@link UserContext} 并续期（滑动过期 30 分钟），
- * 未命中返回 HTTP 401。token 与用户 ID 的绑定关系在登录接口写入（见 AuthServiceImpl）。</p>
+ * 登录态拦截器。
+ * <p>规则：</p>
+ * <ul>
+ *   <li><b>写操作</b>（POST 等）：必须携带有效 token（{@code Authorization: Bearer <token>} →
+ *       Redis {@code dbd:login:token:<token>} 查 userId），未命中返回 HTTP 401</li>
+ *   <li><b>GET 读请求</b>：可选登录——带有效 token 则填充 {@link UserContext}（请求级状态如
+ *       isLiked/signedToday 才能生效），无/无效 token 则以匿名身份放行（论坛"读公开"）</li>
+ * </ul>
+ * <p>token 命中即续期（滑动过期 30 分钟）。</p>
  */
 public class LoginInterceptor implements HandlerInterceptor {
 
@@ -30,25 +35,46 @@ public class LoginInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        // GET 读请求公开（列表/详情/楼层等）；写操作需登录
-        if ("GET".equals(request.getMethod()) || "OPTIONS".equals(request.getMethod())) {
+        String method = request.getMethod();
+        if ("GET".equals(method) || "OPTIONS".equals(method)) {
+            resolveOptionalLogin(request);
             return true;
         }
-        String auth = request.getHeader("Authorization");
-        if (auth == null || !auth.startsWith("Bearer ")) {
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            return false;
-        }
-        String token = auth.substring(7);
-        String userId = stringRedisTemplate.opsForValue().get(TOKEN_PREFIX + token);
+        return requireLogin(request, response);
+    }
+
+    /** 写操作：必须登录，否则 401 */
+    private boolean requireLogin(HttpServletRequest request, HttpServletResponse response) {
+        String userId = resolveUserId(request);
         if (userId == null) {
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             return false;
         }
         UserContext.set(Long.valueOf(userId));
-        // 滑动续期：只要 30 分钟内有请求，token 不过期
-        stringRedisTemplate.expire(TOKEN_PREFIX + token, TOKEN_TTL);
         return true;
+    }
+
+    /** GET 读请求：可选登录（匿名也放行） */
+    private void resolveOptionalLogin(HttpServletRequest request) {
+        String userId = resolveUserId(request);
+        if (userId != null) {
+            UserContext.set(Long.valueOf(userId));
+        }
+    }
+
+    /** 解析并校验 token：有效返回 userId（并滑动续期），否则返回 null */
+    private String resolveUserId(HttpServletRequest request) {
+        String auth = request.getHeader("Authorization");
+        if (auth == null || !auth.startsWith("Bearer ")) {
+            return null;
+        }
+        String token = auth.substring(7);
+        String userId = stringRedisTemplate.opsForValue().get(TOKEN_PREFIX + token);
+        if (userId == null) {
+            return null;
+        }
+        stringRedisTemplate.expire(TOKEN_PREFIX + token, TOKEN_TTL);
+        return userId;
     }
 
     @Override

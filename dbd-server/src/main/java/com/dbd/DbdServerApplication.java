@@ -3,6 +3,7 @@ package com.dbd;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Day-BY-Day 论坛后端启动类。
@@ -17,9 +18,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *   <li>interceptor —— 登录态拦截器</li>
  *   <li>utils     —— 工具类（UserContext 等）</li>
  * </ul>
+ * <p>@EnableScheduling：启用定时任务（热吧榜 5 分钟重算等）。</p>
  */
 @SpringBootApplication
 @MapperScan("com.dbd.mapper")
+@EnableScheduling
 public class DbdServerApplication {
 
     public static void main(String[] args) {

@@ -53,4 +53,18 @@ public final class RedisKeyConstants {
     /** 回帖防重复提交：dbd:repeat:comment:{userId}，3 秒（SETNX） */
     public static final String REPEAT_COMMENT = "dbd:repeat:comment:";
     public static final Duration REPEAT_COMMENT_TTL = Duration.ofSeconds(3);
+
+    /* ---------- 吧（BarServiceImpl） ---------- */
+
+    /** 吧信息缓存：dbd:bar:cache:{barId} → BarVO JSON（空值也缓存） */
+    public static final String BAR_CACHE = "dbd:bar:cache:";
+
+    /** 吧关注人数计数：dbd:bar:member:{barId} → INCR/DECR */
+    public static final String BAR_MEMBER = "dbd:bar:member:";
+
+    /** 签到 BitMap：dbd:sign:{userId}:{yyyyMM} → 每位代表一天 */
+    public static final String SIGN = "dbd:sign:";
+
+    /** 热吧榜：dbd:rank:hot:bar → ZSet，score=memberCount，定时重算 */
+    public static final String RANK_HOT_BAR = "dbd:rank:hot:bar";
 }
