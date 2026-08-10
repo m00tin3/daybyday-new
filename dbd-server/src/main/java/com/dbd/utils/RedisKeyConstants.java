@@ -67,4 +67,15 @@ public final class RedisKeyConstants {
 
     /** 热吧榜：dbd:rank:hot:bar → ZSet，score=memberCount，定时重算 */
     public static final String RANK_HOT_BAR = "dbd:rank:hot:bar";
+
+    /* ---------- 用户/排行/搜索（阶段二） ---------- */
+
+    /** 用户粉丝数：dbd:user:fan:{userId} → INCR/DECR */
+    public static final String USER_FAN = "dbd:user:fan:";
+
+    /** 热帖榜：dbd:rank:hot:post → ZSet，score=热度分（view + like*2 + comment*4），定时重算 */
+    public static final String RANK_HOT_POST = "dbd:rank:hot:post";
+
+    /** 热搜词：dbd:search:hot → ZSet，score=搜索次数 */
+    public static final String SEARCH_HOT = "dbd:search:hot";
 }
