@@ -302,7 +302,7 @@
 #### 3.4.1 用户主页信息
 `GET /api/user/{id}`
 - 成功：`{ "code": 1, "data": { "user": UserVO, "postCount": Long, "followerCount": Long, "followingCount": Long, "isFollowed": Boolean } }`
-- Redis：`dbd:user:cache:{id}` 缓存；关注数 ZSet `dbd:follow:user:{id}`（ZINCRBY 或 SCARD）
+- Redis：粉丝数 `dbd:user:fan:{id}`（String 计数，无值 0）；关注数（followingCount）直查 follow 表；当前实现未做用户缓存
 
 #### 3.4.2 用户帖子
 `GET /api/user/{id}/posts`
@@ -320,7 +320,7 @@
 | page | Integer | 否 | 默认 1 |
 | size | Integer | 否 | 默认 10 |
 
-- 成功：分页结构（PostVO 列表，仅本人可查：token 用户 id 不符 → 2003）
+- 成功：分页结构（PostVO 列表，仅本人可查：未登录/非本人 → 2003）
 
 #### 3.4.4 签到日历
 `GET /api/user/{id}/sign`
@@ -335,7 +335,7 @@
 #### 3.4.5 关注/取消关注用户 🔒
 `POST /api/user/{id}/follow`
 - 成功：`{ "code": 1, "data": { "isFollowed": true, "followerCount": 66 } }`（幂等切换）
-- Redis：`follow` 表（type=1）+ 计数 ZSet；不可关注自己 → 2003
+- Redis：`follow` 表（type=1）为准 + 粉丝计数 `dbd:user:fan:{id}`（INCR/DECR）；不可关注自己 → 2003
 
 ---
 
@@ -344,7 +344,7 @@
 #### 3.5.1 热帖榜
 `GET /api/rank/hot/post`
 - 成功：`{ "code": 1, "data": [ PostVO（按热度降序，最多 20） ] }`
-- Redis：ZSet `dbd:rank:hot:post`，score=热度分（评论+点赞+浏览加权，定时重算落库 `post.score`）
+- Redis：ZSet `dbd:rank:hot:post`，score=热度分 = 浏览 + 点赞×2 + 楼层×4（浏览/点赞实时取 Redis 计数），@Scheduled 每 5 分钟重算 + 首次访问懒构建
 
 #### 3.5.2 关注 Feed 流 🔒（阶段三）
 `GET /api/feed`

@@ -1,10 +1,10 @@
-阶段二完成：用户中心 + 热帖榜 + 搜索热搜
+同步文档：API.md §3.4/§3.5 对齐实现（粉丝计数 Key）+ 计划书 §5.4 状态标注
 
-- GET /api/user/{id}：主页信息（发帖数/粉丝数/关注数/isFollowed）
-- GET /api/user/{id}/posts：用户帖子（复用帖子模块）
-- GET /api/user/favorites：我的收藏（仅本人，批量组装避免 N+1）
-- GET /api/user/{id}/sign：签到日历（BITFIELD u31 还原签到日，修复 MSB-first 位序映射）
-- POST /api/user/{id}/follow：关注用户（follow 表 type=1 + 粉丝计数，不可关注自己 2003）
-- GET /api/rank/hot/post：热帖榜（热度=浏览+点赞*2+楼层*4，ZSet + 5 分钟重算 + 懒构建）
-- GET /api/search/hot + /api/search/post：热搜词（ZINCRBY）+ 搜索
-- 计划书阶段二标记完成、API.md §5 进度 5/6 完成
+API.md：
+- §3.4.1 用户主页：Redis 描述改为实际实现的 dbd:user:fan:{id}（String 计数），注明未做用户缓存
+- §3.4.3 我的收藏：未登录/非本人均返回 2003
+- §3.4.5 关注用户：粉丝计数 dbd:user:fan:{id}（INCR/DECR）
+- §3.5.1 热帖榜：热度公式明确为浏览+点赞*2+楼层*4，不落库 post.score
+
+PROJECT_PLAN.md §5.4：
+- 吧/排行/搜索区标记 ✅；新增 dbd:user:fan（✅）；dbd:user:cache 标注未实现

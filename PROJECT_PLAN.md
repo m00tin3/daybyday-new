@@ -300,18 +300,19 @@ dbd:post:view:{postId}            浏览量 INCR
 dbd:repeat:post:{userId}          发帖防重复，TTL 3s（SETNX）
 dbd:repeat:comment:{userId}       回帖防重复，TTL 3s（SETNX）
 
-# ===== 吧（阶段二） =====
+# ===== 吧（✅） =====
 dbd:bar:cache:{barId}             吧信息缓存
 dbd:bar:member:{barId}            关注人数计数
 dbd:sign:{userId}:{yyyyMM}        签到 BitMap
-dbd:rank:hot:bar                  热吧榜 ZSet
-dbd:rank:hot:post                 热帖榜 ZSet
-dbd:search:hot                    热搜词 ZSet
+dbd:rank:hot:bar                  热吧榜 ZSet（每 5 分钟重算）
+dbd:rank:hot:post                 热帖榜 ZSet（热度=浏览+点赞*2+楼层*4）
+dbd:search:hot                    热搜词 ZSet（ZINCRBY）
 
-# ===== 用户/Feed/同城（阶段二/三） =====
-dbd:user:cache:{userId}           用户信息缓存
-dbd:feed:user:{userId}            关注 Feed 流 ZSet
-dbd:geo:post                      同城 GEO
+# ===== 用户/Feed/同城（部分✅） =====
+dbd:user:fan:{userId}             粉丝数计数（✅）
+dbd:user:cache:{userId}           用户信息缓存（未实现，后续按需）
+dbd:feed:user:{userId}            关注 Feed 流 ZSet（阶段三）
+dbd:geo:post                      同城 GEO（阶段三）
 
 # ===== 秒杀（阶段三） =====
 dbd:seckill:stock:{activityId}    库存预扣
