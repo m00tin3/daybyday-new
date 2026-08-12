@@ -1,12 +1,7 @@
-前端全页面实现：8 个占位页全部替换为功能页 + HomeView 修复
+同步文档：计划书前端章节更新为已实现状态
 
-- components/PostCard：帖子列表卡片（首页/吧页/搜索/用户页复用，摘要截断、置顶/精华标签）
-- PostDetailView：正文+图片+点赞收藏（幂等切换）+楼层列表分页+回帖（未登录引导跳登录）
-- PostNewView：选吧（热吧榜数据）+标题+正文发布，成功后跳详情页
-- BarView：吧信息卡+签到（signedToday 状态、连续天数提示）+关注切换+吧内帖子分页
-- UserView：主页信息+关注按钮（非本人）+自绘签到日历（signList 标蓝）+帖子/收藏 Tab（收藏仅本人可见）
-- SearchView：搜索框+热搜词 tag 点击即搜+结果分页
-- RankView：热帖榜/热吧榜 Tab（前三名奖牌高亮）
-- NearbyView：GEO 查询表单+后端未实现时降级提示（阶段三）
-- ActivityView：活动详情卡+抢楼按钮+演示数据降级（与种子数据 1001/1002 对应，后端就绪即自动切换）
-- HomeView 修复：真实数据取 res.data.list（原 bug：PageResult 对象直接渲染导致空白），复用 PostCard
+PROJECT_PLAN.md：
+- 顶部状态：已定稿待开工 → 开发中（阶段一/二完成，阶段三待开工）
+- §1.2 现有资产：更新为 dbd-web（10 页面全部实现）+ dbd-server（阶段一/二接口），tieba-demo 标注完成使命
+- §4.1 页面规划：10 个页面加状态列（8 个 ✅ + 同城/活动为完整 UI 降级展示）
+- §4.2 工程结构：标注 ✅ 与 PostCard 组件
