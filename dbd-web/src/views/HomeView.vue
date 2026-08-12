@@ -1,13 +1,16 @@
 <script setup>
-// 首页：帖子列表 + 热门吧侧栏（视觉参考 tieba-demo）
-// 已接后端接口（getPostList / getBarRank）；后端未启动时自动降级展示 mock 数据，保证骨架可演示
+// 首页：帖子列表 + 热门吧/热议侧栏（视觉参考 tieba-demo）
 import { ref } from 'vue'
 import { getPostList } from '../api/post'
 import { getBarRank } from '../api/bar'
+import PostCard from '../components/PostCard.vue'
 
 const loading = ref(true)
 const posts = ref([])
 const bars = ref([])
+const page = ref(1)
+const total = ref(0)
+const size = 10
 
 // mock 数据：仅在后端不可用时兜底展示
 const mockPosts = [
@@ -19,62 +22,71 @@ const mockPosts = [
 ]
 
 const mockBars = [
-  { id: 1, name: '猫咪吧', emoji: '🐱', members: '128万', color: '#4e6ef2' },
-  { id: 2, name: '游戏攻略吧', emoji: '🎮', members: '96万', color: '#f40' },
-  { id: 3, name: '考研上岸吧', emoji: '📚', members: '73万', color: '#2db55d' },
-  { id: 4, name: '汽车之家吧', emoji: '🚗', members: '52万', color: '#ff8f1f' }
+  { id: 1, name: '猫咪吧', emoji: '🐱', memberCount: '128万', color: '#4e6ef2' },
+  { id: 2, name: '游戏攻略吧', emoji: '🎮', memberCount: '96万', color: '#f40' },
+  { id: 3, name: '考研上岸吧', emoji: '📚', memberCount: '73万', color: '#2db55d' },
+  { id: 4, name: '汽车之家吧', emoji: '🚗', memberCount: '52万', color: '#ff8f1f' }
 ]
 
-// 加载数据：任一接口失败则用 mock 兜底（Promise.allSettled 互不影响）
+const barColors = ['#4e6ef2', '#f40', '#2db55d', '#ff8f1f']
+
 async function load() {
   loading.value = true
   try {
-    const [postRes, barRes] = await Promise.allSettled([
-      getPostList({ page: 1, size: 10 }),
-      getBarRank()
-    ])
-    posts.value = postRes.status === 'fulfilled' ? postRes.value.data ?? [] : mockPosts
-    bars.value = barRes.status === 'fulfilled' ? barRes.value.data ?? [] : mockBars
+    const res = await getPostList({ page: page.value, size })
+    posts.value = res.data?.list ?? []
+    total.value = res.data?.total ?? 0
+  } catch {
+    posts.value = mockPosts
   } finally {
     loading.value = false
   }
 }
 
+async function loadBars() {
+  try {
+    const res = await getBarRank()
+    bars.value = res.data ?? mockBars
+  } catch {
+    bars.value = mockBars
+  }
+}
+
 load()
+loadBars()
 </script>
 
 <template>
   <div class="container">
     <section class="post-list" v-loading="loading">
-      <div v-for="p in posts" :key="p.id" class="post-item" @click="$router.push(`/post/${p.id}`)">
-        <div class="post-avatar">{{ p.avatar || '📄' }}</div>
-        <div class="post-main">
-          <div class="post-title">
-            <span v-if="p.tag" class="tag" :class="p.tag">{{ p.tag }}</span>
-            <span>{{ p.title }}</span>
-          </div>
-          <div class="post-desc">{{ p.desc }}</div>
-          <div class="post-meta">
-            <span class="user">{{ p.user }}</span> · {{ p.time }} · 回复 <span class="post-count">{{ p.count }}</span>
-          </div>
-        </div>
-      </div>
+      <PostCard v-for="p in posts" :key="p.id" :post="p" />
+      <el-pagination
+        v-if="total > size"
+        class="pager"
+        background
+        layout="prev, pager, next"
+        :total="total"
+        :page-size="size"
+        :current-page="page"
+        @current-change="(p) => { page = p; load() }"
+      />
+      <el-empty v-if="!loading && posts.length === 0" description="还没有帖子，快去发第一帖吧" />
     </section>
 
     <aside class="sidebar">
       <div class="side-card">
         <h3>热门吧</h3>
-        <div v-for="b in bars" :key="b.id" class="side-item" @click="$router.push(`/bar/${b.id}`)">
-          <div class="b-avatar" :style="{ background: b.color }">{{ b.emoji }}</div>
+        <div v-for="(b, i) in bars" :key="b.id" class="side-item" @click="$router.push(`/bar/${b.id}`)">
+          <div class="b-avatar" :style="{ background: barColors[i % 4] }">{{ b.name.slice(0, 1) }}</div>
           <a>{{ b.name }}</a>
-          <span class="members">{{ b.members }}</span>
+          <span class="members">{{ b.memberCount }}</span>
         </div>
       </div>
       <div class="side-card">
-        <h3>热议话题</h3>
-        <div class="side-item"><a># 周末去哪玩 #</a><span class="members">热</span></div>
-        <div class="side-item"><a># 应届生求职经验 #</a><span class="members">热</span></div>
-        <div class="side-item"><a># 一人一句家乡话 #</a><span class="members">新</span></div>
+        <h3>发现</h3>
+        <div class="side-item" @click="$router.push('/rank')"><a>🏆 排行榜</a></div>
+        <div class="side-item" @click="$router.push('/search')"><a>🔥 热搜</a></div>
+        <div class="side-item" @click="$router.push('/nearby')"><a>📍 同城</a></div>
       </div>
     </aside>
   </div>
@@ -82,20 +94,8 @@ load()
 
 <style scoped>
 .container { max-width: 1080px; margin: 16px auto; display: grid; grid-template-columns: 1fr 260px; gap: 16px; }
-.post-list { background: #fff; border-radius: 6px; padding: 8px 0; }
-.post-item { display: flex; padding: 14px 18px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
-.post-item:last-child { border-bottom: none; }
-.post-item:hover { background: #f7f9ff; }
-.post-avatar { width: 44px; height: 44px; border-radius: 50%; background: #4e6ef2; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 20px; margin-right: 14px; flex-shrink: 0; }
-.post-main { flex: 1; }
-.post-title { font-size: 15px; font-weight: bold; color: #333; margin-bottom: 6px; }
-.post-title .tag { font-size: 12px; color: #fff; background: #f40; border-radius: 3px; padding: 1px 5px; margin-right: 6px; font-weight: normal; }
-.post-title .tag.精 { background: #2db55d; }
-.post-desc { font-size: 13px; color: #999; margin-bottom: 8px; line-height: 1.5; }
-.post-meta { font-size: 12px; color: #aaa; }
-.post-meta .user { color: #4e6ef2; }
-.post-count { color: #4e6ef2; font-weight: bold; font-size: 13px; }
-
+.post-list { background: #fff; border-radius: 6px; padding: 8px 0; min-height: 300px; }
+.pager { padding: 12px 18px; justify-content: center; }
 .sidebar { display: flex; flex-direction: column; gap: 16px; }
 .side-card { background: #fff; border-radius: 6px; padding: 14px; }
 .side-card h3 { font-size: 14px; margin-bottom: 12px; padding-left: 8px; border-left: 3px solid #4e6ef2; }

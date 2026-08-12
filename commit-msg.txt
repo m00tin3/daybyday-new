@@ -1,10 +1,12 @@
-同步文档：API.md §3.4/§3.5 对齐实现（粉丝计数 Key）+ 计划书 §5.4 状态标注
+前端全页面实现：8 个占位页全部替换为功能页 + HomeView 修复
 
-API.md：
-- §3.4.1 用户主页：Redis 描述改为实际实现的 dbd:user:fan:{id}（String 计数），注明未做用户缓存
-- §3.4.3 我的收藏：未登录/非本人均返回 2003
-- §3.4.5 关注用户：粉丝计数 dbd:user:fan:{id}（INCR/DECR）
-- §3.5.1 热帖榜：热度公式明确为浏览+点赞*2+楼层*4，不落库 post.score
-
-PROJECT_PLAN.md §5.4：
-- 吧/排行/搜索区标记 ✅；新增 dbd:user:fan（✅）；dbd:user:cache 标注未实现
+- components/PostCard：帖子列表卡片（首页/吧页/搜索/用户页复用，摘要截断、置顶/精华标签）
+- PostDetailView：正文+图片+点赞收藏（幂等切换）+楼层列表分页+回帖（未登录引导跳登录）
+- PostNewView：选吧（热吧榜数据）+标题+正文发布，成功后跳详情页
+- BarView：吧信息卡+签到（signedToday 状态、连续天数提示）+关注切换+吧内帖子分页
+- UserView：主页信息+关注按钮（非本人）+自绘签到日历（signList 标蓝）+帖子/收藏 Tab（收藏仅本人可见）
+- SearchView：搜索框+热搜词 tag 点击即搜+结果分页
+- RankView：热帖榜/热吧榜 Tab（前三名奖牌高亮）
+- NearbyView：GEO 查询表单+后端未实现时降级提示（阶段三）
+- ActivityView：活动详情卡+抢楼按钮+演示数据降级（与种子数据 1001/1002 对应，后端就绪即自动切换）
+- HomeView 修复：真实数据取 res.data.list（原 bug：PageResult 对象直接渲染导致空白），复用 PostCard
