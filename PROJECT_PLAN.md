@@ -1,6 +1,6 @@
-# 论坛项目计划书（v0.2 · 已按审查意见修订）
+# 论坛项目计划书（v0.3 · 全部阶段完成）
 
-> 状态：**开发中**。阶段一、二已完成（认证/帖子/吧/用户/排行/搜索 + 前端全页面）；阶段三（秒杀/Feed/GEO）待开工。
+> 状态：**✅ 已完成**。阶段一~四全部完成（认证/帖子/吧/用户/排行/搜索 + 秒杀/Feed/GEO + 前端全页面 + 演示数据/Docker 部署/README），项目达到「可演示、可上线」。
 >
 > 历史审查决策（v0.1 → v0.2）：① 项目名已定 ② 前端选 Vue3 ③ 秒杀保留 ④ 免费服务器部署 ⑤ 接口文档驱动联调 ⑥ 偏 Redis 实战但要能上线
 
@@ -15,8 +15,8 @@
 
 ### 1.2 现有资产
 - `tieba-demo/index.html`：贴吧风格静态首页（视觉参考，已完成使命——前端已用 Vue3 重写实现全部页面）
-- `dbd-web/`：Vue3 前端工程（✅ 10 个页面全部实现）
-- `dbd-server/`：Spring Boot 后端工程（✅ 阶段一/二全部接口）
+- `dbd-web/`：Vue3 前端工程（✅ 11 个页面全部实现，含 Feed）
+- `dbd-server/`：Spring Boot 后端工程（✅ 阶段一/二/三全部接口）
 
 ### 1.3 项目名
 - 中文名：**盖楼吧**
@@ -55,7 +55,7 @@ nginx ──(静态: /)──► Vue3 构建产物 (dist)
 
 ## 4. 前端部分（Vue3）
 
-### 4.1 页面规划（✅ = 已实现；同城/活动为完整 UI + 降级展示，后端就绪即切换真实数据）
+### 4.1 页面规划（✅ = 已实现）
 
 | 页面 | 路由 | 说明 | 对应后端接口 | 状态 |
 |---|---|---|---|---|
@@ -67,8 +67,9 @@ nginx ──(静态: /)──► Vue3 构建产物 (dist)
 | 个人中心 | `/user/:id` | 我的帖子、收藏、签到日历、关注 | 用户信息、关注 | ✅ |
 | 搜索 | `/search` | 关键词搜索 + 热搜词展示 | 搜索、热搜 | ✅ |
 | 排行榜 | `/rank` | 热帖榜 / 热吧榜 | 榜单接口 | ✅ |
-| 同城 | `/nearby` | 附近帖子（GEO，后端阶段三） | GEO 接口 | ⚙️ 降级 |
-| 抢楼/徽章 | `/activity/:id` | 抢楼活动、限量徽章领取（后端阶段三） | 秒杀接口 | ⚙️ 降级 |
+| 关注 Feed | `/feed` | 关注的人和吧的新帖时间线（滚动分页） | Feed 接口 | ✅ |
+| 同城 | `/nearby` | 附近帖子（GEO） | GEO 接口 | ✅ |
+| 抢楼/徽章 | `/activity/:id` | 抢楼活动、限量徽章领取（Lua 秒杀） | 秒杀接口 | ✅ |
 
 ### 4.2 前端工程结构
 ```
@@ -77,7 +78,7 @@ dbd-web/
 │   ├── api/            # Axios 封装 + 按模块的接口定义（对接 Swagger 文档）✅
 │   ├── router/         # Vue Router 路由 + 登录守卫 ✅
 │   ├── stores/         # Pinia（用户态、token）✅
-│   ├── views/          # 页面组件（对应上表）✅ 10 个页面全部实现
+│   ├── views/          # 页面组件（对应上表）✅ 11 个页面全部实现（含 Feed）
 │   ├── components/     # 公共组件（PostCard 帖子卡片）✅
 │   ├── utils/          # 请求拦截器（401 跳登录）、工具函数 ✅
 │   ├── App.vue
@@ -106,9 +107,9 @@ dbd-web/
 | 5 | 排行榜 | 热帖榜、热吧榜、热搜词 | ZSet + 定时重算 |
 | 6 | 签到 | 每日签到、连续签到奖励 | BitMap + BITFIELD |
 | 7 | UV 统计 | 帖子独立访客、吧 DAU | HyperLogLog |
-| 8 | 关注 Feed 流 | 关注的人/吧的新帖时间线 | ZSet 时间线 + 滚动分页 |
-| 9 | 同城 | 附近帖子/线下聚会 | GEO |
-| 10 | **抢楼/限量徽章（秒杀，必做）** | 抢楼活动、限量称号领取 | **Lua 脚本 + 分布式锁 + 一人一单 + 库存预扣** |
+| 8 | 关注 Feed 流 | 关注的人/吧的新帖时间线 | ZSet 时间线 + 滚动分页 ✅（推模式写扩散 + 懒构建兜底） |
+| 9 | 同城 | 附近帖子/线下聚会 | GEO ✅（GEORADIUS 距离升序，兼容 Redis 3.2+） |
+| 10 | **抢楼/限量徽章（秒杀，必做）** | 抢楼活动、限量称号领取 | **Lua 脚本原子预扣 + 一人一单 + 库存预扣** ✅（异步落库 + 失败补偿） |
 | 11 | 防重复提交 | 发帖/回帖频率控制 | SETNX 分布式锁 |
 
 ### 5.2 后端工程结构
@@ -174,6 +175,8 @@ CREATE TABLE `post` (
   `title`        VARCHAR(64)  NOT NULL COMMENT '标题',
   `content`      MEDIUMTEXT   NOT NULL COMMENT '正文',
   `images`       VARCHAR(1024) DEFAULT NULL COMMENT '图片URL列表（JSON数组）',
+  `longitude`    DECIMAL(10,6) DEFAULT NULL COMMENT '经度（同城 GEO，可空）',
+  `latitude`     DECIMAL(10,6) DEFAULT NULL COMMENT '纬度（同城 GEO，可空）',
   `status`       TINYINT      NOT NULL DEFAULT 1 COMMENT '状态 1正常 0删除 2精华',
   `is_top`       TINYINT      NOT NULL DEFAULT 0 COMMENT '是否置顶 0否 1是',
   `like_count`   INT          NOT NULL DEFAULT 0 COMMENT '点赞数（Redis 为准）',
@@ -279,7 +282,7 @@ CREATE TABLE `activity_order` (
 > 说明：
 > - 点赞/收藏/计数类数据以 Redis 为准（Set + 计数 Key），本表用于**异步落库与对账**，保证重启不丢数；
 > - `activity_order.uk_activity_user` 唯一索引 + Lua 预扣库存，双保险实现"一人一单"；
-> - 关注 Feed 流由 `follow` 表驱动，新帖写入 `dbd:feed:{userId}` ZSet；同城 GEO 数据由 `bar`/`post` 的坐标字段另行扩展（或独立 `nearby_post` 表，阶段三定）。
+> - 关注 Feed 流由 `follow` 表驱动，新帖写入 `dbd:feed:{userId}` ZSet（阶段三已实现）；同城 GEO 数据由 `post` 表坐标字段承载，发帖带坐标时 GEOADD `dbd:geo:post`（阶段三已实现，迁移脚本见 `dbd-server/src/main/resources/db/phase3.sql`）。
 
 ### 5.4 Redis Key 规范（全量规划，✅ = 已实现，实现统一维护于 `RedisKeyConstants`）
 
@@ -312,15 +315,15 @@ dbd:rank:hot:bar                  热吧榜 ZSet（每 5 分钟重算）
 dbd:rank:hot:post                 热帖榜 ZSet（热度=浏览+点赞*2+楼层*4）
 dbd:search:hot                    热搜词 ZSet（ZINCRBY）
 
-# ===== 用户/Feed/同城（部分✅） =====
+# ===== 用户/Feed/同城（✅） =====
 dbd:user:fan:{userId}             粉丝数计数（✅）
 dbd:user:cache:{userId}           用户信息缓存（未实现，后续按需）
-dbd:feed:user:{userId}            关注 Feed 流 ZSet（阶段三）
-dbd:geo:post                      同城 GEO（阶段三）
+dbd:feed:user:{userId}            关注 Feed 流 ZSet（✅ 推模式写扩散 + 懒构建兜底）
+dbd:geo:post                      同城 GEO（✅ GEORADIUS 按距离升序，兼容 Redis 3.2+；6.2+ 可升级 GEOSEARCH）
 
-# ===== 秒杀（阶段三） =====
-dbd:seckill:stock:{activityId}    库存预扣
-dbd:seckill:order:{activityId}:{userId}   一人一单标记
+# ===== 秒杀（✅） =====
+dbd:seckill:stock:{activityId}    库存预扣（Lua 原子：判断 + 扣减）
+dbd:seckill:order:{activityId}:{userId}   一人一单标记（Lua SETNX）
 ```
 
 ### 5.5 接口文档
@@ -336,47 +339,51 @@ dbd:seckill:order:{activityId}:{userId}   一人一单标记
 |---|---|---|---|
 | 阶段一（基础） | 前后端骨架 + 验证码登录 + 帖子 CRUD + 缓存三件套 + 点赞/收藏 | 全栈跑通：首页/详情/发帖/登录可用 | ✅ 已完成 |
 | 阶段二（亮点） | 签到 BitMap + UV 统计 + 热帖/热吧榜 + 热搜 + 吧主页/用户中心 | 榜单与统计上线 | ✅ 已完成 |
-| 阶段三（进阶） | **抢楼/徽章秒杀（必做）** + 关注 Feed 流 + 同城 GEO | 高并发场景完整 | |
-| 阶段四（收尾） | 打包部署：nginx + 免费服务器 + README + 演示数据 | 可演示、可上线 | |
+| 阶段三（进阶） | **抢楼/徽章秒杀（必做）** + 关注 Feed 流 + 同城 GEO | 高并发场景完整 | ✅ 已完成 |
+| 阶段四（收尾） | 打包部署：Docker Compose + nginx + README + 演示数据 | 可演示、可上线 | ✅ 已完成 |
 
 ---
 
 ## 7. 部署方案（免费服务器）
 
-### 7.1 部署架构
-1. 前端 `dbd-web` 构建 → dist 静态文件 → nginx `html/`
-2. 后端 `dbd-server.jar` 运行（`:8080`）
-3. nginx：`/` → 静态页面；`/api` → 反向代理 `localhost:8080`
-4. MySQL / Redis 同机或容器化运行
+### 7.1 部署架构（已落地，见 README.md / DEPLOY.md / docker-compose.yml）
+1. `docker-compose.yml` 一键编排：MySQL 8 + Redis 7 + 后端 jar + 前端 nginx，首次启动自动建库灌演示数据
+2. 前端 `dbd-web` 构建 → dist 静态文件 → nginx `html/`（`dbd-web/nginx.conf`：`/` 静态 + `/api` 反代后端）
+3. 后端 `dbd-server.jar`（`dbd-server/Dockerfile` 多阶段构建）运行（`:8080`）
+4. MySQL / Redis 容器化运行，连接参数由 `MYSQL_*` / `REDIS_*` 环境变量注入
 
-### 7.2 免费服务器候选（待选）
-| 方案 | 备案要求 | 适合度 |
+### 7.2 免费服务器候选（已定：Docker 通用 + 免备案平台）
+| 方案 | 备案要求 | 状态 |
 |---|---|---|
-| 海外免费层（Railway / Render / Fly.io 等） | 无需备案 | 快速上线演示 Redis 实战效果 |
-| Oracle Cloud 免费 VPS（永久免费档） | 无需备案 | 资源足，但申请门槛/回收风险 |
-| 国内云新用户免费试用（腾讯云/阿里云轻量） | **需 ICP 备案** | 正式上线路径，备案周期长 |
+| Railway（推荐，Docker 原生 + 托管 MySQL/Redis 插件） | 无需备案 | ✅ 首选，步骤见 DEPLOY.md §2.1 |
+| Render / Fly.io 等海外免费层 | 无需备案 | 备选，步骤见 DEPLOY.md §2.2 |
+| Oracle Cloud 免费 VPS（永久免费档） | 无需备案 | 备选：Docker Compose 一键部署，见 DEPLOY.md §2.3 |
+| 国内云（腾讯云/阿里云轻量） | **需 ICP 备案** | 备案后部署方式不变（Docker Compose） |
 
-### 7.3 合规说明（已知约束，先按此模式做）
+### 7.3 合规说明（已知约束）
 - 国内提供公开 UGC 评论/社区服务需 **ICP 备案**（经营性还需 ICP 许可证），个人难以办理
-- 本阶段**按可上线模式开发**（架构、配置、部署脚本均按生产标准），实际公网部署优先走**免备案路径**（海外免费层）；国内备案上线作为后续独立步骤，不影响开发
+- 已按**可上线模式**完成（Docker 镜像、Compose 编排、nginx 配置、部署脚本、上线检查清单），实际公网部署走**免备案路径**（Railway/Render/Oracle Cloud）；国内备案上线作为后续独立步骤
+- 上线前检查清单与生产切换点（关闭演示验证码/SQL 日志、改密码、HTTPS）见 DEPLOY.md §5
 
 ---
 
 ## 8. 决策记录与剩余待定项
 
-### 8.1 已定决策（v0.2 审查确认）
+### 8.1 已定决策（v0.2 审查确认 + 阶段四落地）
 - [x] 项目名：Day-BY-Day（DbD）
 - [x] 前端：Vue3 + Vite + Element Plus（方案 B）
 - [x] 抢楼/限量徽章秒杀：**必做**
 - [x] 部署：免费服务器，先按可上线模式开发
 - [x] 联调方式：SpringDoc 接口文档驱动，直接前后端联调
 - [x] 项目定位：偏 Redis 实战，但要能部署上线
+- [x] 部署形态：Docker Compose 一键编排（MySQL/Redis/后端/前端 nginx），参数环境变量注入
+- [x] 公网部署平台：Railway 首选（Docker 原生 + 托管 MySQL/Redis），Oracle Cloud 免费 VPS 备选
+- [x] 演示数据：6 个演示账号 + 29 篇帖子 + 楼层/关注/点赞/收藏种子（`init.sql` 全量 / `phase*.sql` 增量）
 
-### 8.2 剩余待定（不阻塞开工，可后补）
-- [ ] 免费部署平台最终选型（§7.2 三选一，阶段四再定）
-- [ ] 代码仓库托管位置（GitHub 私有/公开）
-- [ ] 是否需要种子/演示数据（建议要，阶段四加）
+### 8.2 剩余待定（不影响演示，可后补）
+- [ ] 代码仓库托管位置（GitHub 私有/公开，本地 git 已提交）
+- [ ] 生产短信通道接入（演示模式 app.sms.mock=true，切换点已预留）
 
 ---
 
-*v0.2 定稿，等待确认开工。*
+*v0.3 · 全部阶段完成，项目可演示、可上线（部署见 README.md / DEPLOY.md）。*

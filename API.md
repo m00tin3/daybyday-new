@@ -38,6 +38,7 @@
   - POST 等写操作**必须登录**：token 命中即续期（滑动过期 30 分钟），否则返回 HTTP 401
 - 标记 🔒 的接口为写操作或需本人信息，必须携带有效 token
 - 特例：`GET /api/auth/me` 虽为 GET，但未登录时由 Controller 手动返回 HTTP 401（登录态信息接口）
+- 特例：`GET /api/feed` 虽为 GET，但需登录，未登录时由 Service 返回 code 2003（关注流为个人信息）
 
 ### 1.4 分页
 请求参数统一 `page`（从 1 开始）、`size`（默认 10，最大 50）。
@@ -222,9 +223,11 @@
 | title | String | 是 | 标题（1-64 字符） |
 | content | String | 是 | 正文（1-50000 字符） |
 | images | String[] | 否 | 图片 URL 列表 |
+| x | Double | 否 | 经度（可选，带坐标则写入 GEO 同城） |
+| y | Double | 否 | 纬度（可选，带坐标则写入 GEO 同城） |
 
 - 成功：`{ "code": 1, "msg": "发布成功", "data": { "id": Long } }`
-- Redis：ID 生成（`dbd:id:post:{yyyy:MM:dd}` 时间戳 + 自增）；防重复提交 `SETNX dbd:repeat:post:{userId}`（3 秒，先校验后上锁）→ 3002；发布后删除列表缓存
+- Redis：ID 生成（`dbd:id:post:{yyyy:MM:dd}` 时间戳 + 自增）；防重复提交 `SETNX dbd:repeat:post:{userId}`（3 秒，先校验后上锁）→ 3002；发布后删除列表缓存；带 x/y 时 `GEOADD dbd:geo:post`；同步触发 Feed 写扩散（推送给关注该作者/该吧的粉丝）
 - 失败：参数不合法 → 2001；吧不存在 → 2002
 
 #### 3.2.4 点赞/取消点赞 🔒
@@ -346,7 +349,7 @@
 - 成功：`{ "code": 1, "data": [ PostVO（按热度降序，最多 20） ] }`
 - Redis：ZSet `dbd:rank:hot:post`，score=热度分 = 浏览 + 点赞×2 + 楼层×4（浏览/点赞实时取 Redis 计数），@Scheduled 每 5 分钟重算 + 首次访问懒构建
 
-#### 3.5.2 关注 Feed 流 🔒（阶段三）
+#### 3.5.2 关注 Feed 流 🔒
 `GET /api/feed`
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -354,11 +357,12 @@
 | size | Integer | 否 | 默认 10 |
 
 - 成功：`{ "code": 1, "data": { "list": [ PostVO ], "lastId": Long, "hasMore": true } }`
-- Redis：`dbd:feed:user:{userId}` ZSet（score=发帖时间戳）；关注新用户/新吧时对已关注目标新帖写入；滚动分页 `ZREVRANGEBYSCORE`
+- Redis：`dbd:feed:user:{userId}` ZSet（score=发帖时间戳毫秒）；发帖时推模式写扩散（推送给关注该作者/该吧的粉丝）；feed 为空时从 follow 表拉取关注对象近期帖子懒构建兜底；滚动分页 `ZREVRANGEBYSCORE`（lastId 排他游标，多取一条判断 hasMore）
+- 失败：未登录 → 2003（🔒 特例：GET 但需登录，见 §1.3）
 
 ---
 
-### 3.6 秒杀模块 `activity`（对应前端 `src/api/activity.js`，阶段三核心）
+### 3.6 秒杀模块 `activity`（对应前端 `src/api/activity.js`）
 
 #### 3.6.1 活动详情
 `GET /api/activity/{id}`
@@ -369,10 +373,10 @@
 `POST /api/activity/{id}/grab`
 - 成功：`{ "code": 1, "msg": "抢楼成功", "data": { "orderId": Long, "floorNo": Integer(抢楼时返回) } }`
 - **实现要点（面试核心）**：
-  1. Lua 原子脚本（`resources/lua/seckill.lua`）：`dbd:seckill:stock:{id}` 库存预扣 + `dbd:seckill:order:{id}:{userId}` SETNX 一人一单，单次 Redis 往返
-  2. 成功后异步写 `activity_order` 表（唯一索引 `uk_activity_user` 双保险）
-  3. 主流程不建表事务：Lua 通过 → 异步落库；落库失败补偿回滚库存
-  4. 超时/异常兜底分布式锁（Redisson 或 SETNX + Lua 解锁）
+  1. Lua 原子脚本（`resources/lua/seckill.lua`）：库存判断 + `dbd:seckill:stock:{id}` 预扣 + `dbd:seckill:order:{id}:{userId}` SETNX 一人一单，单次 Redis 往返（Redis 单线程执行脚本，天然互斥，无需额外分布式锁）
+  2. 成功后 `@Async` 异步写 `activity_order` 表（唯一索引 `uk_activity_user` 双保险），主流程立即返回
+  3. 主流程不建表事务：Lua 通过 → 异步落库；落库失败补偿回滚（库存 +1 + 删除一人一单标记）
+  4. 库存预热：`SETNX dbd:seckill:stock:{id}` 首次访问时从 DB stock 初始化；抢楼楼层号 = stock - remainStock
 - 失败：未开始/已结束 → 4001；售罄 → 4002；重复抢 → 4003
 
 ---
@@ -397,7 +401,7 @@
 
 ---
 
-### 3.8 同城模块 `nearby`（对应前端 `src/api/activity.js`，阶段三）
+### 3.8 同城模块 `nearby`（对应前端 `src/api/activity.js`）
 
 #### 3.8.1 附近帖子
 `GET /api/nearby/post`
@@ -408,7 +412,7 @@
 | distance | Integer | 否 | 半径（米），默认 5000 |
 
 - 成功：`{ "code": 1, "data": [ { PostVO, "distance": 1234.5 } ] }`（按距离升序）
-- Redis：GEO `dbd:geo:post`，发帖带坐标时 GEOADD；查询 GEOSEARCH
+- Redis：GEO `dbd:geo:post`，发帖带坐标时 GEOADD；查询 GEORADIUS（兼容 Redis 3.2+，6.2+ 可等价升级 GEOSEARCH）；GEO 集合为空时从 DB 带坐标帖子懒构建
 
 ---
 
@@ -438,6 +442,7 @@
 | `user.getSignCalendar` | /api/user/{id}/sign | GET | - |
 | `user.followUser` | /api/user/{id}/follow | POST | 🔒 |
 | `user.getHotPosts` | /api/rank/hot/post | GET | - |
+| `feed.getFeed` | /api/feed | GET | 🔒（特例：未登录返回 2003） |
 | `activity.getActivityInfo` | /api/activity/{id} | GET | - |
 | `activity.grabActivity` | /api/activity/{id}/grab | POST | 🔒 |
 | `activity.getHotSearch` | /api/search/hot | GET | - |
@@ -458,7 +463,7 @@
 | 4 | 点赞/收藏 + 落库兜底 | 阶段一收尾 | ✅ |
 | 5 | 吧：吧信息/签到 BitMap/热吧榜 ZSet/关注 | 阶段二 | ✅ |
 | 6 | 用户中心 + UV 统计 + 热搜 | 阶段二收尾 | ✅ |
-| 7 | 秒杀 Lua 脚本 + Feed 流 + GEO 同城 | 阶段三 | |
+| 7 | 秒杀 Lua 脚本 + Feed 流 + GEO 同城 | 阶段三 | ✅ |
 | 8 | 演示数据 + 部署（nginx 已就绪） | 阶段四 | |
 
 > 数据库建表 SQL 见 `dbd-server/src/main/resources/db/init.sql`（库名 `dbd`，9 张表 + 种子数据）。

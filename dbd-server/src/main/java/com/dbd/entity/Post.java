@@ -33,6 +33,12 @@ public class Post {
     /** 图片URL列表（JSON数组字符串） */
     private String images;
 
+    /** 经度（同城 GEO，可空） */
+    private Double longitude;
+
+    /** 纬度（同城 GEO，可空） */
+    private Double latitude;
+
     /** 状态 1正常 0删除 2精华 */
     private Integer status;
 

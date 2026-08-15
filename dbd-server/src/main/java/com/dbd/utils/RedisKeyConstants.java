@@ -78,4 +78,21 @@ public final class RedisKeyConstants {
 
     /** 热搜词：dbd:search:hot → ZSet，score=搜索次数 */
     public static final String SEARCH_HOT = "dbd:search:hot";
+
+    /* ---------- 秒杀（阶段三，ActivityServiceImpl） ---------- */
+
+    /** 秒杀库存预扣：dbd:seckill:stock:{activityId} → 剩余库存（活动开始前从 DB 初始化） */
+    public static final String SECKILL_STOCK = "dbd:seckill:stock:";
+    /** 一人一单标记：dbd:seckill:order:{activityId}:{userId} → userId（Lua SETNX 原子写入，永久） */
+    public static final String SECKILL_ORDER = "dbd:seckill:order:";
+
+    /* ---------- 关注 Feed 流（阶段三，FeedServiceImpl） ---------- */
+
+    /** 关注 Feed 时间线：dbd:feed:user:{userId} → ZSet，member=postId，score=发帖时间戳(ms) */
+    public static final String FEED_USER = "dbd:feed:user:";
+
+    /* ---------- 同城 GEO（阶段三，NearbyServiceImpl） ---------- */
+
+    /** 附近帖子 GEO：dbd:geo:post → GEO 集合，member=postId，坐标=发帖经纬度 */
+    public static final String GEO_POST = "dbd:geo:post";
 }

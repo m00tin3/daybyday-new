@@ -87,6 +87,8 @@ loadBars()
         <div class="side-item" @click="$router.push('/rank')"><a>🏆 排行榜</a></div>
         <div class="side-item" @click="$router.push('/search')"><a>🔥 热搜</a></div>
         <div class="side-item" @click="$router.push('/nearby')"><a>📍 同城</a></div>
+        <div class="side-item" @click="$router.push('/activity/1001')"><a>🎁 限量徽章</a></div>
+        <div class="side-item" @click="$router.push('/activity/1002')"><a>🎯 抢楼活动</a></div>
       </div>
     </aside>
   </div>

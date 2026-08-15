@@ -19,6 +19,7 @@ import com.dbd.mapper.PostFavoriteMapper;
 import com.dbd.mapper.PostLikeMapper;
 import com.dbd.mapper.PostMapper;
 import com.dbd.mapper.UserMapper;
+import com.dbd.service.FeedService;
 import com.dbd.service.PostService;
 import com.dbd.utils.RedisIdWorker;
 import com.dbd.utils.RedisKeyConstants;
@@ -30,11 +31,13 @@ import com.dbd.vo.UserVO;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.geo.Point;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -64,6 +67,7 @@ public class PostServiceImpl implements PostService {
     private final BarMapper barMapper;
     private final StringRedisTemplate stringRedisTemplate;
     private final RedisIdWorker redisIdWorker;
+    private final FeedService feedService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 详情缓存基础 TTL：10 分钟 + 0~5 分钟随机偏移（防雪崩） */
@@ -79,7 +83,8 @@ public class PostServiceImpl implements PostService {
     public PostServiceImpl(PostMapper postMapper, CommentMapper commentMapper,
                            PostLikeMapper postLikeMapper, PostFavoriteMapper postFavoriteMapper,
                            UserMapper userMapper, BarMapper barMapper,
-                           StringRedisTemplate stringRedisTemplate, RedisIdWorker redisIdWorker) {
+                           StringRedisTemplate stringRedisTemplate, RedisIdWorker redisIdWorker,
+                           FeedService feedService) {
         this.postMapper = postMapper;
         this.commentMapper = commentMapper;
         this.postLikeMapper = postLikeMapper;
@@ -88,6 +93,7 @@ public class PostServiceImpl implements PostService {
         this.barMapper = barMapper;
         this.stringRedisTemplate = stringRedisTemplate;
         this.redisIdWorker = redisIdWorker;
+        this.feedService = feedService;
     }
 
     /* ==================== 列表 ==================== */
@@ -256,9 +262,23 @@ public class PostServiceImpl implements PostService {
         post.setCommentCount(0);
         post.setViewCount(0);
         post.setUvCount(0);
+        // 新帖即最新回复：显式写入创建/最后回复时间（列表按最后回复倒序，同时作为 Feed 时间线 score）
+        LocalDateTime now = LocalDateTime.now();
+        post.setCreatedAt(now);
+        post.setLastCommentTime(now);
+        // 可选坐标：写入 GEO 同城（发帖带经纬度时 GEOADD）
+        if (dto.getX() != null && dto.getY() != null) {
+            post.setLongitude(dto.getX());
+            post.setLatitude(dto.getY());
+            stringRedisTemplate.opsForGeo().add(RedisKeyConstants.GEO_POST,
+                    new Point(dto.getX(), dto.getY()), String.valueOf(post.getId()));
+        }
         postMapper.insert(post);
         // 发帖后删首页列表缓存，下次请求重新查库（简单一致性，生产可升级延迟双删）
         deleteHomeListCache();
+        // Feed 写扩散：新帖推入关注该作者/该吧的粉丝时间线
+        feedService.pushNewPost(post.getId(), post.getUserId(), post.getBarId(),
+                now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
         return post.getId();
     }
 
@@ -358,9 +378,13 @@ public class PostServiceImpl implements PostService {
         if (Boolean.FALSE.equals(locked)) {
             throw BusinessException.tooFast("操作太快，请稍后再试");
         }
-        // 楼层号：Redis INCR，帖内从 1 递增（全局唯一、不依赖数据库）
-        Long floorNo = stringRedisTemplate.opsForValue()
-                .increment(RedisKeyConstants.POST_FLOOR + postId);
+        // 楼层号：Redis INCR 生成；首次回帖先与 DB 最大楼层对齐（种子数据楼层不撞号）
+        String floorKey = RedisKeyConstants.POST_FLOOR + postId;
+        Long maxFloor = commentMapper.selectMaxFloor(postId);
+        if (maxFloor != null && maxFloor > 0) {
+            stringRedisTemplate.opsForValue().setIfAbsent(floorKey, String.valueOf(maxFloor));
+        }
+        Long floorNo = stringRedisTemplate.opsForValue().increment(floorKey);
         Comment comment = new Comment();
         comment.setId(redisIdWorker.nextId("comment"));
         comment.setPostId(postId);

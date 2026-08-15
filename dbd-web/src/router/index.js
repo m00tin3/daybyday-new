@@ -19,6 +19,8 @@ const routes = [
   { path: '/search', name: 'search', component: () => import('../views/SearchView.vue') },
   // 排行榜
   { path: '/rank', name: 'rank', component: () => import('../views/RankView.vue') },
+  // 关注 Feed 流：需登录
+  { path: '/feed', name: 'feed', component: () => import('../views/FeedView.vue'), meta: { requiresAuth: true } },
   // 同城（GEO）
   { path: '/nearby', name: 'nearby', component: () => import('../views/NearbyView.vue') },
   // 抢楼 / 徽章秒杀

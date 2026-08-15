@@ -32,6 +32,8 @@ public class PostVO {
     private Boolean isLiked;
     private Boolean isFavorited;
     private String createdAt;
+    /** 距查询坐标的距离（米，仅同城 GEO 接口返回） */
+    private Double distance;
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -49,6 +51,7 @@ public class PostVO {
         vo.setTitle(row.getTitle());
         vo.setContent(row.getContent());
         vo.setIsTop(row.getIsTop() != null && row.getIsTop() == 1);
+        vo.setStatus(row.getStatus());
         vo.setLikeCount(row.getLikeCount() == null ? 0L : row.getLikeCount().longValue());
         vo.setFavoriteCount(row.getFavoriteCount() == null ? 0L : row.getFavoriteCount().longValue());
         vo.setCommentCount(row.getCommentCount() == null ? 0L : row.getCommentCount().longValue());

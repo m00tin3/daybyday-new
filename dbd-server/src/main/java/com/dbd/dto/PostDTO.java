@@ -26,4 +26,10 @@ public class PostDTO {
 
     /** 图片URL列表（可空） */
     private List<String> images;
+
+    /** 经度（可选，带坐标时写入 GEO 同城） */
+    private Double x;
+
+    /** 纬度（可选，带坐标时写入 GEO 同城） */
+    private Double y;
 }
