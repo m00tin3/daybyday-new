@@ -83,7 +83,7 @@ public class RankServiceImpl implements RankService {
     @Override
     public void rebuildHotPostRank() {
         List<Post> posts = postMapper.selectList(new LambdaQueryWrapper<Post>()
-                .eq(Post::getStatus, 1));
+                .in(Post::getStatus, 1, 2));
         for (Post post : posts) {
             Long views = getViewCount(post.getId());
             Long likes = getLikeCount(post.getId());

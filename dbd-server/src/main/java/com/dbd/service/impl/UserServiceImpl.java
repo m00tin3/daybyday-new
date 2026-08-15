@@ -82,7 +82,7 @@ public class UserServiceImpl implements UserService {
         UserProfileVO vo = new UserProfileVO();
         vo.setUser(UserVO.from(user));
         vo.setPostCount(postMapper.selectCount(new LambdaQueryWrapper<Post>()
-                .eq(Post::getUserId, id).eq(Post::getStatus, 1)));
+                .eq(Post::getUserId, id).in(Post::getStatus, 1, 2)));
         vo.setFollowerCount(fanCount(id));
         vo.setFollowingCount(followMapper.selectCount(new LambdaQueryWrapper<Follow>()
                 .eq(Follow::getUserId, id).eq(Follow::getFollowType, 1)));

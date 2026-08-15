@@ -1,0 +1,73 @@
+# ============================================================
+# Day-BY-Day 一键部署编排（MySQL 8 + Redis 7 + 后端 + 前端 nginx）
+#
+# 启动：  docker compose up -d --build
+# 访问：  http://localhost          （前端，默认 80 端口）
+# 文档：  http://localhost/swagger-ui.html
+#
+# 端口被占用时可用环境变量覆盖（例如本机已有 MySQL/Redis）：
+#   MYSQL_PORT=3307 REDIS_PORT=6380 WEB_PORT=8090 docker compose up -d --build
+# ============================================================
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: dbd-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-1234}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      # 首次启动自动执行 init.sql（建库建表 + 演示数据）
+      - mysql-data:/var/lib/mysql
+      - ./dbd-server/src/main/resources/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    container_name: dbd-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  backend:
+    build: ./dbd-server
+    container_name: dbd-backend
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-1234}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      TZ: Asia/Shanghai
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build: ./dbd-web
+    container_name: dbd-web
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      - backend
+
+volumes:
+  mysql-data:

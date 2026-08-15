@@ -14,6 +14,7 @@ public class PostRow {
     private String title;
     private String content;
     private Integer isTop;
+    private Integer status;
     private Integer likeCount;
     private Integer favoriteCount;
     private Integer commentCount;

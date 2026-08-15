@@ -5,7 +5,7 @@
 
     <!-- 帖子列表：联表补全吧名/作者，置顶优先 → 最后回复时间倒序 -->
     <select id="selectPostPage" resultType="com.dbd.vo.PostRow">
-        SELECT p.id, p.bar_id, p.user_id, p.title, p.content, p.is_top,
+        SELECT p.id, p.bar_id, p.user_id, p.title, p.content, p.is_top, p.status,
                p.like_count, p.favorite_count, p.comment_count, p.view_count,
                p.created_at, p.last_comment_time,
                b.name AS bar_name,
@@ -13,7 +13,7 @@
         FROM post p
         JOIN bar b ON p.bar_id = b.id
         JOIN `user` u ON p.user_id = u.id
-        WHERE p.status = 1
+        WHERE p.status IN (1, 2)
         <if test="barId != null">
             AND p.bar_id = #{barId}
         </if>

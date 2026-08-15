@@ -1,6 +1,9 @@
 # ============================================================
 # Day-BY-Day 后端配置
-# 数据库连接密码可用环境变量 DB_PASSWORD 覆盖（默认 1234）
+# 数据库/Redis 连接支持环境变量覆盖：
+#   MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD
+#   REDIS_HOST / REDIS_PORT
+# 本地默认 localhost + 1234；Docker 由 docker-compose 注入容器名
 # ============================================================
 
 server:
@@ -13,14 +16,14 @@ spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     # 库 dbd（建库脚本见 src/main/resources/db/init.sql）
-    url: jdbc:mysql://localhost:3306/dbd?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8&allowPublicKeyRetrieval=true
-    username: root
-    password: ${DB_PASSWORD:1234}
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/dbd?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:1234}
   data:
     redis:
-      # 本机 Redis（会话/缓存/计数/秒杀均由 Redis 承载）
-      host: localhost
-      port: 6379
+      # Redis（会话/缓存/计数/秒杀/GEO/Feed 均由 Redis 承载）
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
       lettuce:
         pool:
           max-active: 16
