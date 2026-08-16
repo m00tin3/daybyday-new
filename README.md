@@ -126,6 +126,7 @@ cd dbd-web && npm install && npm run dev
 ├── docker-compose.yml          # MySQL 8 + Redis 7 + 后端 + 前端 一键编排
 ├── API.md                      # 接口约定文档（与 Swagger 一致）
 ├── PROJECT_PLAN.md             # 项目计划书
+├── INTERVIEW_GUIDE.md          # 简历知识点详解（面试手册）
 └── DEPLOY.md                   # 部署指南（免费服务器/免备案平台）
 ```
 
