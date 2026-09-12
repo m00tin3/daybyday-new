@@ -6,11 +6,14 @@ import lombok.Data;
 import java.time.format.DateTimeFormatter;
 
 /**
- * 用户视图对象（对应 API.md §2.1 UserVO）。
- * <p>注意：不返回 phone（脱敏）、不返回 password。</p>
+ * 当前登录用户的完整资料（**仅返回给用户本人**）。
+ *
+ * <p>与 {@link UserVO} 的关键区别：本 VO 包含 {@code phone}。</p>
+ * <p>{@code UserVO} 会随帖子作者、评论者、吧成员等场景展示给其他用户，
+ * 因此不能携带手机号；只有"查自己"的接口才使用本 VO。</p>
  */
 @Data
-public class UserVO {
+public class UserSelfVO {
 
     private Long id;
 
@@ -20,18 +23,21 @@ public class UserVO {
 
     private String signText;
 
-    private String createdAt;
+    /** 登录账号（手机号或管理员标识）：仅本人可见 */
+    private String phone;
 
-    /** 角色 0普通用户 1管理员（前端据此显示"管理后台"入口；最终鉴权仍由后端负责） */
+    /** 角色 0普通用户 1管理员 */
     private Integer role;
 
-    /** entity → VO（时间统一 yyyy-MM-dd HH:mm:ss） */
-    public static UserVO from(User user) {
-        UserVO vo = new UserVO();
+    private String createdAt;
+
+    public static UserSelfVO from(User user) {
+        UserSelfVO vo = new UserSelfVO();
         vo.setId(user.getId());
         vo.setNickname(user.getNickname());
         vo.setIcon(user.getIcon());
         vo.setSignText(user.getSignText());
+        vo.setPhone(user.getPhone());
         vo.setRole(user.getRole() == null ? User.ROLE_USER : user.getRole());
         vo.setCreatedAt(user.getCreatedAt() == null ? null
                 : user.getCreatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));

@@ -33,4 +33,10 @@ public interface PostService {
 
     /** 回帖：楼层号 INCR + 防重复提交，返回 { id, floorNo } */
     Map<String, Object> addComment(Long postId, CommentDTO dto);
+
+    /**
+     * 清除该帖的详情缓存、重建互斥锁与首页列表缓存。
+     * <p>管理端隐藏/删除帖子后必须调用，否则前台在缓存 TTL 内仍能看到旧数据。</p>
+     */
+    void evictPostCache(Long postId);
 }

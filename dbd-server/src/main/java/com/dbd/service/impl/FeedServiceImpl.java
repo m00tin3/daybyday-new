@@ -170,14 +170,21 @@ public class FeedServiceImpl implements FeedService {
         Set<Long> barIds = postMap.values().stream().map(Post::getBarId).collect(Collectors.toSet());
         Map<Long, User> userMap = userIds.isEmpty() ? Map.of()
                 : userMapper.selectBatchIds(userIds).stream().collect(Collectors.toMap(User::getId, u -> u));
+        // 只保留正常状态的吧：吧被隐藏后其下帖子不应出现在关注流
         Map<Long, String> barNameMap = barIds.isEmpty() ? Map.of()
                 : barMapper.selectBatchIds(barIds).stream()
+                        .filter(b -> b.getStatus() != null && b.getStatus() == 1)
                         .collect(Collectors.toMap(Bar::getId, Bar::getName));
 
         List<PostVO> list = new ArrayList<>();
         for (Long id : postIds) {
             Post post = postMap.get(id);
-            if (post == null || post.getStatus() == 0) {
+            // 统一可见性判定：隐藏帖(3)与已删除帖(0)都不能出现在关注流
+            if (post == null || !Post.isVisible(post.getStatus())) {
+                continue;
+            }
+            // 吧不可见（已隐藏/已删除）时同样跳过
+            if (!barNameMap.containsKey(post.getBarId())) {
                 continue;
             }
             list.add(PostVO.from(post, userMap.get(post.getUserId()), barNameMap.get(post.getBarId())));

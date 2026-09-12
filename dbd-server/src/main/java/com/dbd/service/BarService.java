@@ -29,4 +29,10 @@ public interface BarService {
 
     /** 定时重算热吧榜（DB member_count → ZSet） */
     void rebuildRank();
+
+    /**
+     * 清除吧信息缓存。
+     * <p>管理端隐藏/删除吧后必须调用，否则前台在缓存 TTL（5 分钟）内仍能读到旧数据。</p>
+     */
+    void evictBarCache(Long barId);
 }

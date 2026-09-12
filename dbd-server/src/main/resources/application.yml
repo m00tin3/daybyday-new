@@ -68,3 +68,8 @@ app:
     # 演示模式：验证码固定 123456，不接真实短信通道（联调/面试演示直接输入）
     # 生产模式改为 false，并在 AuthServiceImpl 中接入短信服务商 API
     mock: ${SMS_MOCK:true}
+  admin:
+    # 管理员免验证码登录：true 时 role=1 的账号可用任意 6 位验证码直接登录。
+    # ⚠️ 开启后，任何知道管理员账号标识的人都能进入 /admin 管理后台。
+    #    公开部署请设为 false（.env 的 ADMIN_FREE_LOGIN=false）。
+    free-login: ${ADMIN_FREE_LOGIN:true}

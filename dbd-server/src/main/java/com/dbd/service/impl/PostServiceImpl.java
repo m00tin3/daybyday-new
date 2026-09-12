@@ -147,6 +147,12 @@ public class PostServiceImpl implements PostService {
             sleep(50);
             vo = buildDetail(id);
         }
+        // 统一语义：帖子不可见（不存在 / 已删除 / 已隐藏 / 所属吧已隐藏）一律抛 2002。
+        // 否则首次请求会返回 code=1 + data=null，而第二次命中空值缓存才返回 2002，
+        // 同一状态下两次请求结果不一致，前端会渲染空白页而不是"帖子不存在"。
+        if (vo == null) {
+            throw BusinessException.notFound("帖子不存在");
+        }
         fillRequestState(id, vo);
         return vo;
     }
@@ -184,15 +190,20 @@ public class PostServiceImpl implements PostService {
         }
     }
 
-    /** 重建详情：DB 查询帖子 + 作者 + 吧名；帖子不存在返回 null */
+    /** 重建详情：DB 查询帖子 + 作者 + 吧名；帖子不可见（不存在/已删除/已隐藏）返回 null */
     private PostVO buildDetail(Long id) {
         Post post = postMapper.selectById(id);
-        if (post == null || post.getStatus() == 0) {
+        // 统一可见性判定：隐藏帖(3)与已删除帖(0)对前台均视为不存在
+        if (post == null || !Post.isVisible(post.getStatus())) {
             return null;
         }
         User author = userMapper.selectById(post.getUserId());
         Bar bar = barMapper.selectById(post.getBarId());
-        return PostVO.from(post, author, bar == null ? null : bar.getName());
+        // 吧被隐藏/删除时其下帖子一并不可见（与列表 SQL 的 b.status = 1 保持一致）
+        if (bar == null || bar.getStatus() == null || bar.getStatus() != 1) {
+            return null;
+        }
+        return PostVO.from(post, author, bar.getName());
     }
 
     /** 互斥锁：SETNX 抢占，重建完成后释放 */
@@ -410,11 +421,22 @@ public class PostServiceImpl implements PostService {
         return result;
     }
 
+    /* ==================== 管理端支撑 ==================== */
+
+    @Override
+    public void evictPostCache(Long postId) {
+        deleteCache(postId);
+        // 重建互斥锁一并清理：否则隐藏/删除瞬间若残留锁，下次详情重建会被跳过
+        stringRedisTemplate.delete(RedisKeyConstants.POST_CACHE + postId + ":lock");
+        deleteHomeListCache();
+    }
+
     /* ==================== 工具 ==================== */
 
     private void requirePost(Long postId) {
         Post post = postMapper.selectById(postId);
-        if (post == null || post.getStatus() == 0) {
+        // 统一可见性判定：隐藏帖(3)对前台等同不存在（不可点赞/收藏/回帖/查楼层）
+        if (post == null || !Post.isVisible(post.getStatus())) {
             throw BusinessException.notFound("帖子不存在");
         }
     }

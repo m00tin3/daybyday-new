@@ -19,11 +19,12 @@ USE dbd;
 -- ==================== 用户 ====================
 CREATE TABLE IF NOT EXISTS `user` (
   `id`          BIGINT       NOT NULL COMMENT '用户ID（全局ID生成器）',
-  `phone`       VARCHAR(20)  NOT NULL COMMENT '手机号（登录账号）',
+  `phone`       VARCHAR(20)  NOT NULL COMMENT '登录账号（手机号或管理员标识）',
   `password`    VARCHAR(128) NOT NULL COMMENT '密码（BCrypt加密，验证码登录注册时存随机串）',
   `nickname`    VARCHAR(32)  NOT NULL COMMENT '昵称',
   `icon`        VARCHAR(255) DEFAULT NULL COMMENT '头像URL',
   `sign_text`   VARCHAR(128) DEFAULT NULL COMMENT '个性签名',
+  `role`        TINYINT      NOT NULL DEFAULT 0 COMMENT '角色 0普通用户 1管理员',
   `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -56,7 +57,7 @@ CREATE TABLE IF NOT EXISTS `post` (
   `images`       VARCHAR(1024) DEFAULT NULL COMMENT '图片URL列表（JSON数组）',
   `longitude`    DECIMAL(10,6) DEFAULT NULL COMMENT '经度（同城 GEO，可空）',
   `latitude`     DECIMAL(10,6) DEFAULT NULL COMMENT '纬度（同城 GEO，可空）',
-  `status`       TINYINT      NOT NULL DEFAULT 1 COMMENT '状态 1正常 0删除 2精华',
+  `status`       TINYINT      NOT NULL DEFAULT 1 COMMENT '状态 1正常 0删除 2精华 3隐藏（隐藏态前台全链路不可见，仅管理后台可见）',
   `is_top`       TINYINT      NOT NULL DEFAULT 0 COMMENT '是否置顶 0否 1是',
   `like_count`   INT          NOT NULL DEFAULT 0 COMMENT '点赞数（Redis 为准）',
   `favorite_count` INT        NOT NULL DEFAULT 0 COMMENT '收藏数（Redis 为准）',
@@ -169,6 +170,13 @@ INSERT IGNORE INTO `user` (`id`, `phone`, `password`, `nickname`, `sign_text`) V
   (9004, '13800000004', 'demo', '上岸人', '早七晚十一，一战成硕'),
   (9005, '13800000005', 'demo', '干饭魂', '深夜放毒专业户，美食探店'),
   (9006, '13800000006', 'demo', '新手上路', '第一辆车，请多指教');
+
+-- 管理员账号（role=1）：登录后可进入 /admin 管理后台
+-- ⚠️ 管理员免验证码登录由 app.admin.free-login 控制（.env 的 ADMIN_FREE_LOGIN）。
+--    公开部署时建议改为 false，或把下面账号改成只有你知道的标识，
+--    否则任何知道该账号的人都能进入管理后台删除内容。
+INSERT IGNORE INTO `user` (`id`, `phone`, `password`, `nickname`, `sign_text`, `role`) VALUES
+  (9000, '2485617328', 'admin', '系统管理员', '社区管理员', 1);
 
 -- 基础吧
 INSERT IGNORE INTO `bar` (`id`, `name`, `description`, `member_count`, `post_count`) VALUES

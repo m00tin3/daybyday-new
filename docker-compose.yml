@@ -92,6 +92,9 @@ services:
       SQL_LOG_IMPL: ${SQL_LOG_IMPL:-org.apache.ibatis.logging.nologging.NoLoggingImpl}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SMS_MOCK: ${SMS_MOCK:-true}
+      # 管理员免验证码登录：true 时任何知道管理员账号标识的人都能进管理后台，
+      # 公开部署建议在 .env 中设为 false
+      ADMIN_FREE_LOGIN: ${ADMIN_FREE_LOGIN:-true}
     ports:
       # 仅回环：Swagger 调试走 SSH 隧道，不对公网开放
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"

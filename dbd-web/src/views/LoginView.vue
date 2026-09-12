@@ -1,6 +1,11 @@
 <script setup>
-// 登录页：手机号 + 验证码（对应 API.md §3.1）
+// 登录页：账号 + 验证码（对应 API.md §3.1）
 // 登录成功后写入 Pinia（token 持久化 localStorage），按 redirect 参数回跳来源页
+//
+// 账号字段兼容两类：
+//   普通用户 → 11 位手机号（如 13800000001）
+//   管理员   → 任意 6-20 位数字标识（如 2485617328）
+// 因此前端校验放宽为 6-20 位数字，与后端 LoginDTO 的校验保持一致。
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -17,10 +22,12 @@ const sending = ref(false) // 发送验证码请求中
 const loginLoading = ref(false)
 const countdown = ref(0) // 验证码 60s 倒计时
 
-// 发送验证码：手机号格式校验 + 60s 重发限制
+const ACCOUNT_PATTERN = /^\d{6,20}$/
+
+// 发送验证码：账号格式校验 + 60s 重发限制
 async function onSendCode() {
-  if (!/^1\d{10}$/.test(phone.value)) {
-    ElMessage.warning('请输入正确的手机号')
+  if (!ACCOUNT_PATTERN.test(phone.value)) {
+    ElMessage.warning('请输入正确的账号（6-20 位数字）')
     return
   }
   sending.value = true
@@ -40,7 +47,7 @@ async function onSendCode() {
 // 登录：成功后写入用户态，回跳来源页
 async function onLogin() {
   if (!phone.value || !code.value) {
-    ElMessage.warning('请输入手机号和验证码')
+    ElMessage.warning('请输入账号和验证码')
     return
   }
   loginLoading.value = true
@@ -61,7 +68,7 @@ async function onLogin() {
       <h2 class="title">DbD · 登录</h2>
       <el-form @submit.prevent="onLogin">
         <el-form-item>
-          <el-input v-model="phone" placeholder="手机号" maxlength="11" size="large" />
+          <el-input v-model="phone" placeholder="账号（手机号 / 管理员标识）" maxlength="20" size="large" />
         </el-form-item>
         <el-form-item>
           <div class="code-row">
@@ -75,6 +82,9 @@ async function onLogin() {
           登录 / 注册
         </el-button>
       </el-form>
+      <p class="demo-tip">
+        演示账号：13800000001 ~ 13800000006（验证码 123456）
+      </p>
     </el-card>
   </div>
 </template>
@@ -85,4 +95,5 @@ async function onLogin() {
 .title { text-align: center; margin-bottom: 24px; color: #4e6ef2; }
 .code-row { display: flex; gap: 8px; width: 100%; }
 .submit { width: 100%; }
+.demo-tip { margin-top: 14px; font-size: 12px; color: #aaa; text-align: center; }
 </style>

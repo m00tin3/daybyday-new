@@ -73,6 +73,13 @@ public final class RedisKeyConstants {
     /** 用户粉丝数：dbd:user:fan:{userId} → INCR/DECR */
     public static final String USER_FAN = "dbd:user:fan:";
 
+    /**
+     * 用户角色缓存：dbd:user:role:{userId} → 0普通 / 1管理员。
+     * 管理接口鉴权用，避免每个管理请求都查库；角色极少变动，10 分钟 TTL。
+     */
+    public static final String USER_ROLE = "dbd:user:role:";
+    public static final Duration USER_ROLE_TTL = Duration.ofMinutes(10);
+
     /** 热帖榜：dbd:rank:hot:post → ZSet，score=热度分（view + like*2 + comment*4），定时重算 */
     public static final String RANK_HOT_POST = "dbd:rank:hot:post";
 

@@ -251,6 +251,13 @@ public class BarServiceImpl implements BarService {
         log.info("热吧榜已重算，共 {} 个吧", bars.size());
     }
 
+    /* ==================== 管理端支撑 ==================== */
+
+    @Override
+    public void evictBarCache(Long barId) {
+        stringRedisTemplate.delete(RedisKeyConstants.BAR_CACHE + barId);
+    }
+
     /* ==================== 工具 ==================== */
 
     private void requireBar(Long id) {

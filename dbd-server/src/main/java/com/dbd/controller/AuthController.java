@@ -5,7 +5,7 @@ import com.dbd.dto.LoginDTO;
 import com.dbd.dto.RegisterDTO;
 import com.dbd.service.AuthService;
 import com.dbd.utils.UserContext;
-import com.dbd.vo.UserVO;
+import com.dbd.vo.UserSelfVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
@@ -52,9 +52,9 @@ public class AuthController {
         return Result.ok(authService.register(dto));
     }
 
-    @Operation(summary = "当前登录用户信息 🔒（特例：GET 接口未登录也返回 401）")
+    @Operation(summary = "当前登录用户完整资料 🔒（含手机号，仅本人可见）")
     @GetMapping("/me")
-    public Result<UserVO> me(HttpServletResponse response) {
+    public Result<UserSelfVO> me(HttpServletResponse response) {
         if (UserContext.get() == null) {
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             return Result.fail(-1, "未登录");

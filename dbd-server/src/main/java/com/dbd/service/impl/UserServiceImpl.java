@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dbd.common.BusinessException;
 import com.dbd.common.PageResult;
+import com.dbd.dto.UpdateProfileDTO;
 import com.dbd.entity.Follow;
 import com.dbd.entity.Post;
 import com.dbd.entity.PostFavorite;
@@ -129,7 +130,8 @@ public class UserServiceImpl implements UserService {
         List<PostVO> list = new ArrayList<>();
         for (PostFavorite fav : favs) {
             Post post = postMap.get(fav.getPostId());
-            if (post == null || post.getStatus() == 0) {
+            // 统一可见性判定：隐藏帖(3)不出现在收藏列表
+            if (post == null || !Post.isVisible(post.getStatus())) {
                 continue;
             }
             User author = userMap.get(post.getUserId());
@@ -212,6 +214,71 @@ public class UserServiceImpl implements UserService {
         result.put("isFollowed", followed);
         result.put("followerCount", fanCount(id));
         return result;
+    }
+
+    /* ==================== 个人资料 ==================== */
+
+    @Override
+    public UserVO updateProfile(UpdateProfileDTO dto) {
+        Long userId = UserContext.get();
+        if (userId == null) {
+            throw BusinessException.forbidden("请先登录");
+        }
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw BusinessException.notFound("用户不存在");
+        }
+
+        // 只写非 null 字段：MyBatis-Plus updateById 默认忽略 null（FieldStrategy.NOT_NULL），
+        // 因此未提交的字段不会被覆盖
+        User update = new User();
+        update.setId(userId);
+
+        if (dto.getNickname() != null) {
+            String nickname = dto.getNickname().trim();
+            if (nickname.isEmpty()) {
+                throw BusinessException.param("昵称不能为空");
+            }
+            update.setNickname(nickname);
+        }
+        if (dto.getSignText() != null) {
+            update.setSignText(dto.getSignText().trim());
+        }
+        if (dto.getIcon() != null) {
+            update.setIcon(dto.getIcon().trim());
+        }
+        if (dto.getPhone() != null) {
+            String phone = dto.getPhone().trim();
+            if (!phone.equals(user.getPhone())) {
+                // 登录账号全局唯一：先查冲突给出友好提示，再由 uk_phone 唯一索引兜底
+                Long conflict = userMapper.selectCount(new LambdaQueryWrapper<User>()
+                        .eq(User::getPhone, phone)
+                        .ne(User::getId, userId));
+                if (conflict != null && conflict > 0) {
+                    throw BusinessException.param("该账号已被占用，请换一个");
+                }
+                update.setPhone(phone);
+            }
+        }
+
+        userMapper.updateById(update);
+        return UserVO.from(userMapper.selectById(userId));
+    }
+
+    @Override
+    public boolean isAdmin(Long userId) {
+        if (userId == null) {
+            return false;
+        }
+        String key = RedisKeyConstants.USER_ROLE + userId;
+        String cached = stringRedisTemplate.opsForValue().get(key);
+        if (cached != null) {
+            return User.ROLE_ADMIN == Integer.parseInt(cached);
+        }
+        User user = userMapper.selectById(userId);
+        int role = user == null || user.getRole() == null ? User.ROLE_USER : user.getRole();
+        stringRedisTemplate.opsForValue().set(key, String.valueOf(role), RedisKeyConstants.USER_ROLE_TTL);
+        return role == User.ROLE_ADMIN;
     }
 
     /* ==================== 工具 ==================== */

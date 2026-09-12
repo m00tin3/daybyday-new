@@ -64,13 +64,19 @@ public class RankServiceImpl implements RankService {
         List<Long> barIds = postMap.values().stream().map(Post::getBarId).distinct().toList();
         Map<Long, User> userMap = userMapper.selectBatchIds(userIds).stream()
                 .collect(Collectors.toMap(User::getId, u -> u));
+        // 只保留正常状态的吧：吧被隐藏后其下帖子不应出现在热帖榜
         Map<Long, String> barNameMap = barMapper.selectBatchIds(barIds).stream()
+                .filter(b -> b.getStatus() != null && b.getStatus() == 1)
                 .collect(Collectors.toMap(Bar::getId, Bar::getName));
 
         List<PostVO> result = new ArrayList<>();
         for (Long id : postIds) {
             Post post = postMap.get(id);
-            if (post == null || post.getStatus() == 0) {
+            // 统一可见性判定：隐藏帖(3)不能出现在热帖榜
+            if (post == null || !Post.isVisible(post.getStatus())) {
+                continue;
+            }
+            if (!barNameMap.containsKey(post.getBarId())) {
                 continue;
             }
             result.add(PostVO.from(post, userMap.get(post.getUserId()), barNameMap.get(post.getBarId())));

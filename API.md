@@ -75,9 +75,22 @@
 | nickname | String | 昵称 |
 | icon | String | 头像 URL（可空） |
 | signText | String | 个性签名（可空） |
+| role | Integer | 角色：0 普通用户 / 1 管理员（前端据此显示管理入口） |
 | createdAt | String | 注册时间 |
 
 > 不返回 phone（脱敏）。`auth/login` 等返回的 userInfo 即 UserVO。
+> UserVO 会被用于展示**其他用户**（帖子作者、楼层作者），因此不能携带手机号。
+
+### 2.1.1 UserSelfVO 本人资料
+`GET /api/auth/me` 返回本 VO：字段与 UserVO 相同，**额外包含 `phone`**。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| （同 UserVO） | | |
+| phone | String | 登录账号（手机号或管理员标识）——**仅本人可见**，用于个人资料页回显 |
+
+> 单独定义该 VO 的原因：资料修改需要回显当前账号，但 UserVO 面向他人展示，
+> 若在其中加 phone 会造成手机号泄露。
 
 ### 2.2 BarVO 吧
 | 字段 | 类型 | 说明 |
@@ -88,6 +101,7 @@
 | cover | String | 封面 URL（可空） |
 | memberCount | Long | 关注人数（Redis 计数） |
 | postCount | Long | 帖子数 |
+| status | Integer | 状态：1 正常 / 0 已隐藏（仅管理后台返回并筛选，前台只返回正常吧） |
 | isFollowed | Boolean | 当前登录用户是否已关注（未登录 false） |
 | signedToday | Boolean | 今天是否已签到（未登录 false） |
 
@@ -340,6 +354,22 @@
 - 成功：`{ "code": 1, "data": { "isFollowed": true, "followerCount": 66 } }`（幂等切换）
 - Redis：`follow` 表（type=1）为准 + 粉丝计数 `dbd:user:fan:{id}`（INCR/DECR）；不可关注自己 → 2003
 
+#### 3.4.6 修改个人资料 🔒
+`PUT /api/user/profile`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| nickname | String | 否 | 1-32 字 |
+| signText | String | 否 | ≤128 字 |
+| icon | String | 否 | 头像 URL，≤255 字符（项目暂无文件上传/对象存储，故填写图片地址） |
+| phone | String | 否 | 登录账号，6-20 位数字，需全局唯一 |
+
+- 成功：`{ "code": 1, "msg": "资料已更新", "data": UserSelfVO }`
+- **null 字段表示不修改**（MyBatis-Plus `updateById` 默认忽略 null），因此支持只提交需要改的字段
+- 失败：2001 —— 昵称为空/超长、签名超长、账号格式错误、**账号已被占用**
+- 安全：userId 一律取自登录态 `UserContext`，不接受请求体传入，因此只能改本人资料
+- 唯一性：先查冲突返回友好提示，再由 `user.uk_phone` 唯一索引兜底防并发
+
 ---
 
 ### 3.5 排行/Feed 模块 `rank`
@@ -416,6 +446,88 @@
 
 ---
 
+### 3.9 管理模块 `admin`（对应前端 `src/api/admin.js`）
+
+> **整个 `/api/admin/**` 由 `AdminInterceptor` 强制要求 role=1**：
+> 未登录 → HTTP 401 `{"code":-1,"msg":"未登录"}`；
+> 已登录但非管理员 → HTTP 403 `{"code":2003,"msg":"需要管理员权限"}`。
+>
+> 与登录拦截器的差异：登录拦截器对 GET 是"可选登录"（匿名放行，论坛读公开），
+> 而管理接口即使是 GET 也必须登录且为管理员。
+
+**术语区分**
+
+| 操作 | 语义 | 可恢复 |
+|---|---|---|
+| 隐藏 | 只改状态（帖子 `status=3` / 吧 `status=0`），前台全链路不可见 | ✅ 可恢复 |
+| 删除 | 物理 `DELETE`，并级联清理关联数据与 Redis 残留 | ❌ 不可恢复 |
+
+#### 3.9.1 帖子管理列表 🔒管理员
+`GET /api/admin/post/list`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| keyword | String | 否 | 匹配标题或正文 |
+| status | Integer | 否 | 1 正常 / 2 精华 / 3 隐藏 / 0 已删除；不传则全部 |
+| page / size | Integer | 否 | 默认 1 / 10 |
+
+- 成功：分页结构（PostVO，**含隐藏等前台不可见的状态**）
+- 与前台 `/api/post/list` 的关键区别：前台 SQL 固定 `WHERE p.status IN (1,2) AND b.status = 1`
+
+#### 3.9.2 隐藏帖子 🔒管理员
+`POST /api/admin/post/{id}/hide`
+- 成功：`{ "code": 1, "msg": "已隐藏" }`
+- 语义：`status → 3`，并清除帖子详情缓存、重建互斥锁与首页列表缓存
+- 重复隐藏 → 2001
+
+#### 3.9.3 恢复帖子 🔒管理员
+`POST /api/admin/post/{id}/restore`
+- 成功：`{ "code": 1, "msg": "已恢复" }`
+- 语义：`status → 1`（**原"精华"标记不保留**）
+
+#### 3.9.4 删除帖子 🔒管理员
+`DELETE /api/admin/post/{id}`
+- 成功：`{ "code": 1, "msg": "已删除" }`
+- 级联清理 DB：`comment` / `post_like` / `post_favorite` 中该帖的全部记录
+- 清理 Redis：`dbd:post:cache:{id}` 与 `:lock`、`dbd:post:like|favorite|floor|view|uv:{id}`、
+  `dbd:geo:post`（ZREM）、`dbd:rank:hot:post`（ZREM）、全部 `dbd:feed:user:*`（**SCAN + ZREM，不用 KEYS**）、首页列表缓存
+
+#### 3.9.5 吧管理列表 🔒管理员
+`GET /api/admin/bar/list`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| keyword | String | 否 | 匹配吧名称 |
+| status | Integer | 否 | 1 正常 / 0 已隐藏；不传则全部 |
+| page / size | Integer | 否 | 默认 1 / 10 |
+
+#### 3.9.6 创建贴吧 🔒管理员
+`POST /api/admin/bar`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| name | String | 是 | 1-32 字，全局唯一 |
+| description | String | 否 | ≤255 字 |
+| cover | String | 否 | 封面 URL，≤255 字符 |
+
+- 成功：`{ "code": 1, "msg": "创建成功", "data": { "id": 636654650237386753 } }`
+- 新吧 ID 由 Redis 全局 ID 生成器分配，`creator_id` 记录管理员，初始状态正常
+- 名称重复 → 2001「该吧名称已存在」（`bar.uk_name` 唯一索引兜底）
+
+#### 3.9.7 隐藏 / 恢复贴吧 🔒管理员
+`POST /api/admin/bar/{id}/hide` / `POST /api/admin/bar/{id}/restore`
+- `status → 0` / `status → 1`
+- 隐藏时额外：清除吧信息缓存、从热吧榜 ZSet 移除、清首页列表缓存
+- 隐藏后其下帖子在**列表 SQL（`b.status = 1`）、帖子详情、Feed 流、热帖榜**中一并不可见
+
+#### 3.9.8 删除贴吧 🔒管理员
+`DELETE /api/admin/bar/{id}`
+- 成功：`{ "code": 1, "msg": "已删除" }`
+- **级联删除该吧下全部帖子**（每篇帖子再走 3.9.4 的完整清理），避免留下孤儿数据
+- 额外清理：吧信息缓存、`dbd:bar:member:{id}`、热吧榜成员、首页列表缓存
+
+---
+
 ## 4. 接口与前端 api/ 对照表
 
 | 前端函数 | 路径 | 方法 | 鉴权 |
@@ -441,6 +553,16 @@
 | `user.getUserFavorites` | /api/user/favorites | GET | 🔒 |
 | `user.getSignCalendar` | /api/user/{id}/sign | GET | - |
 | `user.followUser` | /api/user/{id}/follow | POST | 🔒 |
+| `user.updateUserProfile` | /api/user/profile | PUT | 🔒（仅本人） |
+| `admin.getAdminPosts` | /api/admin/post/list | GET | 🔒管理员 |
+| `admin.hidePost` | /api/admin/post/{id}/hide | POST | 🔒管理员 |
+| `admin.restorePost` | /api/admin/post/{id}/restore | POST | 🔒管理员 |
+| `admin.deletePost` | /api/admin/post/{id} | DELETE | 🔒管理员 |
+| `admin.getAdminBars` | /api/admin/bar/list | GET | 🔒管理员 |
+| `admin.createBar` | /api/admin/bar | POST | 🔒管理员 |
+| `admin.hideBar` | /api/admin/bar/{id}/hide | POST | 🔒管理员 |
+| `admin.restoreBar` | /api/admin/bar/{id}/restore | POST | 🔒管理员 |
+| `admin.deleteBar` | /api/admin/bar/{id} | DELETE | 🔒管理员 |
 | `user.getHotPosts` | /api/rank/hot/post | GET | - |
 | `feed.getFeed` | /api/feed | GET | 🔒（特例：未登录返回 2003） |
 | `activity.getActivityInfo` | /api/activity/{id} | GET | - |
@@ -464,6 +586,12 @@
 | 5 | 吧：吧信息/签到 BitMap/热吧榜 ZSet/关注 | 阶段二 | ✅ |
 | 6 | 用户中心 + UV 统计 + 热搜 | 阶段二收尾 | ✅ |
 | 7 | 秒杀 Lua 脚本 + Feed 流 + GEO 同城 | 阶段三 | ✅ |
-| 8 | 演示数据 + 部署（nginx 已就绪） | 阶段四 | |
+| 8 | 演示数据 + 部署（nginx 已就绪） | 阶段四 | ✅ |
+| 9 | 管理后台：管理员角色 + 帖子/吧的隐藏与物理删除 + 创建贴吧 | 阶段五（`user.role` + `/api/admin/**`） | ✅ |
+| 10 | 个人资料页：查看 + 修改（昵称/签名/头像/登录账号） | 阶段五（`PUT /api/user/profile`） | ✅ |
 
 > 数据库建表 SQL 见 `dbd-server/src/main/resources/db/init.sql`（库名 `dbd`，9 张表 + 种子数据）。
+>
+> **存量库升级**：管理功能新增了 `user.role` 字段与帖子 `status=3`（隐藏）语义，
+> 已部署过的库需执行一次增量脚本 `dbd-server/src/main/resources/db/migration_admin.sql`
+> （非幂等，重复执行会报 Duplicate column，忽略即可）。

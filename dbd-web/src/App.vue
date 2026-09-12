@@ -1,5 +1,5 @@
 <script setup>
-// 全局布局：顶部导航（登录后显示用户下拉：个人中心/发帖/退出）+ 页面出口 router-view
+// 全局布局：顶部导航（登录后显示用户下拉：个人资料/我的主页/发帖/管理后台/退出）+ 页面出口 router-view
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUserStore } from './stores/user'
@@ -25,11 +25,16 @@ const showTopbar = computed(() => route.name !== 'login')
         <div class="topbar-right">
           <template v-if="userStore.token">
             <el-dropdown>
-              <span class="user-entry">{{ userStore.userInfo?.nickname || '我' }}</span>
+              <span class="user-entry">
+                {{ userStore.userInfo?.nickname || '我' }}
+                <el-tag v-if="userStore.isAdmin" type="danger" size="small" class="admin-badge">管理员</el-tag>
+              </span>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item @click="$router.push(`/user/${userStore.userInfo?.id || ''}`)">个人中心</el-dropdown-item>
+                  <el-dropdown-item @click="$router.push('/profile')">个人资料</el-dropdown-item>
+                  <el-dropdown-item @click="$router.push(`/user/${userStore.userInfo?.id || ''}`)">我的主页</el-dropdown-item>
                   <el-dropdown-item @click="$router.push('/post/new')">发帖</el-dropdown-item>
+                  <el-dropdown-item v-if="userStore.isAdmin" divided @click="$router.push('/admin')">管理后台</el-dropdown-item>
                   <el-dropdown-item divided @click="userStore.logout(); $router.push('/')">退出登录</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
@@ -60,6 +65,7 @@ body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: #f
 .nav-links a { color: #333; text-decoration: none; font-size: 14px; margin-right: 18px; }
 .nav-links a:hover { color: #4e6ef2; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; }
-.user-entry { cursor: pointer; color: #4e6ef2; font-size: 14px; }
+.user-entry { cursor: pointer; color: #4e6ef2; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; }
+.admin-badge { transform: scale(0.9); }
 .login-btn { color: #4e6ef2; text-decoration: none; font-size: 14px; }
 </style>

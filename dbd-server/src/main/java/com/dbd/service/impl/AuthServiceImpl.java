@@ -10,6 +10,7 @@ import com.dbd.service.AuthService;
 import com.dbd.utils.RedisIdWorker;
 import com.dbd.utils.RedisKeyConstants;
 import com.dbd.utils.UserContext;
+import com.dbd.vo.UserSelfVO;
 import com.dbd.vo.UserVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,10 +25,15 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * 认证服务：验证码 → 登录（未注册自动注册）→ token 会话。
  * <p>演示模式（app.sms.mock=true，默认）：验证码固定 123456，不接真实短信通道。</p>
+ * <p>管理员（role=1）在 app.admin.free-login=true 时可跳过验证码校验，
+ * 详见 {@link #login}。</p>
  */
 @Slf4j
 @Service
 public class AuthServiceImpl implements AuthService {
+
+    /** 账号格式：手机号 11 位，或管理员标识；统一放宽为 6-20 位数字 */
+    private static final String ACCOUNT_PATTERN = "^\\d{6,20}$";
 
     private final StringRedisTemplate stringRedisTemplate;
     private final RedisIdWorker redisIdWorker;
@@ -36,6 +42,14 @@ public class AuthServiceImpl implements AuthService {
     /** 演示模式开关：true 时验证码固定 123456 */
     @Value("${app.sms.mock:true}")
     private boolean smsMock;
+
+    /**
+     * 管理员免验证码登录开关。
+     * <p>⚠️ 开启时，任何知道管理员账号标识的人都能直接进入管理后台，
+     * 公开部署请通过 .env 的 {@code ADMIN_FREE_LOGIN=false} 关闭。</p>
+     */
+    @Value("${app.admin.free-login:true}")
+    private boolean adminFreeLogin;
 
     public AuthServiceImpl(StringRedisTemplate stringRedisTemplate,
                            RedisIdWorker redisIdWorker,
@@ -47,8 +61,8 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public void sendCode(String phone) {
-        if (!phone.matches("^1\\d{10}$")) {
-            throw BusinessException.param("手机号格式不正确");
+        if (phone == null || !phone.matches(ACCOUNT_PATTERN)) {
+            throw BusinessException.param("账号格式不正确（6-20 位数字）");
         }
         // SETNX：60 秒内重复发送直接拒绝（原子，无并发问题）
         Boolean locked = stringRedisTemplate.opsForValue()
@@ -64,8 +78,20 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public Map<String, Object> login(LoginDTO dto) {
-        verifyCode(dto.getPhone(), dto.getCode());
-        return buildTokenResult(findOrCreate(dto.getPhone(), dto.getNickname()));
+        User existing = findByPhone(dto.getPhone());
+
+        // 管理员免验证码登录：仅对**已存在的 role=1 账号**生效（不存在的账号仍走正常校验，
+        // 因此不会自动注册出管理员），且需显式开启开关。
+        boolean freeLogin = existing != null && existing.isAdmin() && adminFreeLogin;
+        if (freeLogin) {
+            log.warn("管理员免验证码登录 account={}, userId={}（app.admin.free-login=true）",
+                    dto.getPhone(), existing.getId());
+        } else {
+            verifyCode(dto.getPhone(), dto.getCode());
+        }
+
+        User user = existing != null ? existing : createUser(dto.getPhone(), dto.getNickname());
+        return buildTokenResult(user);
     }
 
     @Override
@@ -78,7 +104,7 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    public UserVO me() {
+    public UserSelfVO me() {
         Long userId = UserContext.get();
         if (userId == null) {
             throw new BusinessException("未登录");
@@ -87,7 +113,7 @@ public class AuthServiceImpl implements AuthService {
         if (user == null) {
             throw BusinessException.notFound("用户不存在");
         }
-        return UserVO.from(user);
+        return UserSelfVO.from(user);
     }
 
     /** 校验验证码：与 Redis 比对后即删（一次性使用） */
@@ -103,13 +129,12 @@ public class AuthServiceImpl implements AuthService {
         stringRedisTemplate.delete(key);
     }
 
-    /** 登录专用：查用户，不存在则自动注册 */
-    private User findOrCreate(String phone, String nickname) {
-        User user = userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getPhone, phone));
-        return user != null ? user : createUser(phone, nickname);
+    /** 按登录账号查用户，不存在返回 null */
+    private User findByPhone(String phone) {
+        return userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getPhone, phone));
     }
 
-    /** 该手机号是否已注册 */
+    /** 该账号是否已注册 */
     private boolean exists(String phone) {
         Long count = userMapper.selectCount(new LambdaQueryWrapper<User>().eq(User::getPhone, phone));
         return count != null && count > 0;
@@ -124,6 +149,8 @@ public class AuthServiceImpl implements AuthService {
         user.setNickname(nickname == null || nickname.isBlank()
                 ? "用户" + phone.substring(phone.length() - 4)
                 : nickname);
+        // 新注册一律为普通用户；管理员只能由种子数据/后台指定，避免越权自提
+        user.setRole(User.ROLE_USER);
         userMapper.insert(user);
         return user;
     }

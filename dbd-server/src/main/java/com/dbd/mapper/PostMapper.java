@@ -20,4 +20,12 @@ public interface PostMapper extends BaseMapper<Post> {
                                   @Param("barId") Long barId,
                                   @Param("userId") Long userId,
                                   @Param("keyword") String keyword);
+
+    /**
+     * 管理后台帖子列表：**不限制 status**（可查 1正常 / 2精华 / 3隐藏），
+     * 与前台 {@link #selectPostPage}（固定 WHERE status IN (1,2)）区分开。
+     */
+    IPage<PostRow> selectAdminPostPage(Page<Post> page,
+                                       @Param("keyword") String keyword,
+                                       @Param("status") Integer status);
 }

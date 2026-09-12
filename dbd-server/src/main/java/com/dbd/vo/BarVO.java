@@ -15,6 +15,8 @@ public class BarVO {
     private String cover;
     private Long memberCount;
     private Long postCount;
+    /** 状态 1正常 0隐藏（仅管理后台展示与筛选用，前台只返回正常吧） */
+    private Integer status;
     /** 当前用户是否已关注（未登录 false） */
     private Boolean isFollowed;
     /** 今天是否已签到（未登录 false） */
@@ -28,6 +30,7 @@ public class BarVO {
         vo.setCover(bar.getCover());
         vo.setMemberCount(bar.getMemberCount() == null ? 0L : bar.getMemberCount().longValue());
         vo.setPostCount(bar.getPostCount() == null ? 0L : bar.getPostCount().longValue());
+        vo.setStatus(bar.getStatus() == null ? 1 : bar.getStatus());
         return vo;
     }
 }

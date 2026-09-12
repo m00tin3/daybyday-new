@@ -33,6 +33,8 @@ const calendar = computed(() => {
 })
 
 const isSelf = computed(() => userStore.userInfo && String(userStore.userInfo.id) === String(userId))
+// 头像：填的是图片地址就渲染图片，否则按文本（emoji 等）展示
+const isUrl = (v) => typeof v === 'string' && /^https?:\/\//i.test(v)
 
 async function load() {
   loading.value = true
@@ -93,7 +95,10 @@ onMounted(load)
     <template v-if="profile">
       <!-- 用户信息卡 -->
       <div class="profile-card">
-        <div class="avatar">{{ profile.user?.icon || '👤' }}</div>
+        <div class="avatar">
+          <img v-if="isUrl(profile.user?.icon)" :src="profile.user.icon" alt="头像" />
+          <span v-else>{{ profile.user?.icon || '👤' }}</span>
+        </div>
         <div class="info">
           <h2>{{ profile.user?.nickname }}</h2>
           <p class="sign">{{ profile.user?.signText || '这个人很懒，什么都没写' }}</p>
@@ -102,7 +107,8 @@ onMounted(load)
           </p>
         </div>
         <div class="actions">
-          <el-button v-if="!isSelf" round :type="profile.isFollowed ? 'info' : 'primary'" @click="toggleFollow">
+          <el-button v-if="isSelf" round @click="$router.push('/profile')">编辑资料</el-button>
+          <el-button v-else round :type="profile.isFollowed ? 'info' : 'primary'" @click="toggleFollow">
             {{ profile.isFollowed ? '已关注' : '+ 关注' }}
           </el-button>
         </div>
@@ -149,11 +155,13 @@ onMounted(load)
 <style scoped>
 .user-page { max-width: 1080px; margin: 16px auto; }
 .profile-card { background: #fff; border-radius: 6px; padding: 20px; display: flex; align-items: center; gap: 16px; }
-.avatar { width: 72px; height: 72px; border-radius: 50%; background: #4e6ef2; color: #fff; font-size: 32px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.avatar { width: 72px; height: 72px; border-radius: 50%; background: #4e6ef2; color: #fff; font-size: 32px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
 .info { flex: 1; }
 .info h2 { margin-bottom: 6px; }
 .sign { color: #999; font-size: 13px; margin-bottom: 6px; }
 .counts { color: #aaa; font-size: 12px; }
+.actions { display: flex; gap: 8px; }
 .body-grid { display: grid; grid-template-columns: 1fr 300px; gap: 16px; margin-top: 16px; }
 .content-area { background: #fff; border-radius: 6px; padding: 0 18px 8px; }
 .side-area { align-self: start; }

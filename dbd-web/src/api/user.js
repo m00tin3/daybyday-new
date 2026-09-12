@@ -6,6 +6,11 @@ export function getUserProfile(id) {
   return request.get(`/user/${id}`)
 }
 
+/** 修改个人资料（仅本人）🔒 PUT /api/user/profile */
+export function updateUserProfile(data) {
+  return request.put('/user/profile', data)
+}
+
 /** 用户帖子 GET /api/user/{id}/posts */
 export function getUserPosts(id, params) {
   return request.get(`/user/${id}/posts`, { params })

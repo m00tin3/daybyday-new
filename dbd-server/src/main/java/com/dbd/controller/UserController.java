@@ -2,14 +2,19 @@ package com.dbd.controller;
 
 import com.dbd.common.PageResult;
 import com.dbd.common.Result;
+import com.dbd.dto.UpdateProfileDTO;
 import com.dbd.service.UserService;
 import com.dbd.vo.PostVO;
 import com.dbd.vo.UserProfileVO;
+import com.dbd.vo.UserVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -28,6 +33,12 @@ public class UserController {
 
     public UserController(UserService userService) {
         this.userService = userService;
+    }
+
+    @Operation(summary = "修改个人资料 🔒（仅本人；昵称/签名/头像/登录账号，null 字段不改动）")
+    @PutMapping("/profile")
+    public Result<UserVO> updateProfile(@Valid @RequestBody UpdateProfileDTO dto) {
+        return Result.ok(userService.updateProfile(dto), "资料已更新");
     }
 
     @Operation(summary = "用户主页信息")

@@ -14,6 +14,8 @@
         JOIN bar b ON p.bar_id = b.id
         JOIN `user` u ON p.user_id = u.id
         WHERE p.status IN (1, 2)
+          <!-- 吧被隐藏/删除时其下帖子一并不可见，与 PostServiceImpl.buildDetail 的判定保持一致 -->
+          AND b.status = 1
         <if test="barId != null">
             AND p.bar_id = #{barId}
         </if>
@@ -24,6 +26,31 @@
             AND (p.title LIKE CONCAT('%', #{keyword}, '%') OR p.content LIKE CONCAT('%', #{keyword}, '%'))
         </if>
         ORDER BY p.is_top DESC, p.last_comment_time DESC, p.created_at DESC
+    </select>
+
+    <!--
+      管理后台帖子列表：不限 status（1正常 0删除 2精华 3隐藏），可按状态与关键词筛选。
+      注意与上面的前台查询区分：前台固定 WHERE p.status IN (1, 2)，
+      因此 status=3（隐藏）与 status=0（已删除）天然不会出现在前台。
+    -->
+    <select id="selectAdminPostPage" resultType="com.dbd.vo.PostRow">
+        SELECT p.id, p.bar_id, p.user_id, p.title, p.content, p.is_top, p.status,
+               p.like_count, p.favorite_count, p.comment_count, p.view_count,
+               p.created_at, p.last_comment_time,
+               b.name AS bar_name,
+               u.nickname AS author_nickname, u.icon AS author_icon
+        FROM post p
+        JOIN bar b ON p.bar_id = b.id
+        JOIN `user` u ON p.user_id = u.id
+        <where>
+            <if test="status != null">
+                AND p.status = #{status}
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND (p.title LIKE CONCAT('%', #{keyword}, '%') OR p.content LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+        </where>
+        ORDER BY p.created_at DESC
     </select>
 
 </mapper>

@@ -1,5 +1,6 @@
 // 路由配置：所有页面懒加载；meta.requiresAuth = true 的页面未登录会跳转 /login（见底部守卫）
 import { createRouter, createWebHistory } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useUserStore } from '../stores/user'
 
 const routes = [
@@ -13,8 +14,12 @@ const routes = [
   { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
   // 吧主页
   { path: '/bar/:id', name: 'bar', component: () => import('../views/BarView.vue') },
-  // 个人中心
+  // 个人中心（他人/自己的公开主页）
   { path: '/user/:id', name: 'user', component: () => import('../views/UserView.vue') },
+  // 个人资料（查看 + 编辑）：需登录
+  { path: '/profile', name: 'profile', component: () => import('../views/ProfileView.vue'), meta: { requiresAuth: true } },
+  // 管理后台：需登录且为管理员（前端仅为入口拦截，服务端 /api/admin/** 另有强制校验）
+  { path: '/admin', name: 'admin', component: () => import('../views/AdminView.vue'), meta: { requiresAuth: true, requiresAdmin: true } },
   // 搜索 + 热搜
   { path: '/search', name: 'search', component: () => import('../views/SearchView.vue') },
   // 排行榜
@@ -34,11 +39,18 @@ const router = createRouter({
   routes
 })
 
-// 全局前置守卫：需登录页面未登录 → 跳登录页并记录回跳地址
+// 全局前置守卫：
+//   1) 需登录页面未登录 → 跳登录页并记录回跳地址
+//   2) 需要管理员的页面，非管理员 → 提示并回首页
+//      （userInfo 来自 localStorage，可能滞后；越权最终由后端 AdminInterceptor 拦截）
 router.beforeEach((to) => {
   const userStore = useUserStore()
   if (to.meta.requiresAuth && !userStore.token) {
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  if (to.meta.requiresAdmin && !userStore.isAdmin) {
+    ElMessage.warning('需要管理员权限')
+    return { name: 'home' }
   }
 })
 

@@ -2,7 +2,7 @@ package com.dbd.service;
 
 import com.dbd.dto.LoginDTO;
 import com.dbd.dto.RegisterDTO;
-import com.dbd.vo.UserVO;
+import com.dbd.vo.UserSelfVO;
 
 import java.util.Map;
 
@@ -20,6 +20,6 @@ public interface AuthService {
     /** 显式注册：手机号已存在则失败 */
     Map<String, Object> register(RegisterDTO dto);
 
-    /** 当前登录用户信息 */
-    UserVO me();
+    /** 当前登录用户完整资料（含手机号，仅本人可见） */
+    UserSelfVO me();
 }

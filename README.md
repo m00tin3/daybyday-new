@@ -44,6 +44,8 @@ nginx ──(静态: /)──► Vue3 构建产物 (dist)
 | 9 | 同城·附近帖子 | GEO（GEORADIUS 距离升序，兼容 Redis 3.2+） |
 | 10 | **抢楼/限量徽章秒杀** | **Lua 脚本原子预扣库存 + SETNX 一人一单 + 异步落库失败补偿** |
 | 11 | 发帖/回帖防重复提交 | SETNX 分布式锁（3 秒） |
+| 12 | **管理后台：帖子/贴吧的隐藏与物理删除、创建贴吧** | **多级缓存一致性**（详情缓存 + 空值缓存 + 重建锁 + 列表缓存 + 吧缓存全部失效）、**SCAN 清理 Feed 时间线**、角色鉴权拦截器 |
+| 13 | 个人资料查看与修改 | 字段级部分更新（null 不覆盖）+ 登录账号唯一性校验 |
 
 ## 快速启动
 
@@ -100,6 +102,7 @@ cd dbd-web && npm install && npm run dev
 | 13800000004 | 上岸人 | 考研上岸吧活跃用户 |
 | 13800000005 | 干饭魂 | 干饭魂吧活跃用户 |
 | 13800000006 | 新手上路 | 汽车之家吧活跃用户 |
+| **2485617328** | **系统管理员** | **管理员账号**（role=1）：登录后顶栏出现「管理后台」，可隐藏/删除帖子与贴吧、创建贴吧。验证码任意 6 位数字（受 `.env` 的 `ADMIN_FREE_LOGIN` 控制） |
 
 ### 5 分钟演示路线
 
@@ -112,25 +115,31 @@ cd dbd-web && npm install && npm run dev
 7. **吧主页**：签到（BitMap 连续天数）、关注
 8. **排行榜 / 搜索**：热帖榜、热搜词（ZSet）
 9. **接口文档**：/swagger-ui.html 查看全部接口
+10. **个人资料**：顶栏头像下拉 →「个人资料」，可改昵称/签名/头像 URL/登录账号
+11. **管理后台**：退出后用 `2485617328` + 任意 6 位验证码登录 → 顶栏出现「管理员」标识与「管理后台」入口
+    - 帖子管理：搜索/按状态筛选 → 隐藏（前台立刻不可见）→ 恢复 → 删除（物理删除）
+    - 吧管理：创建贴吧 → 隐藏吧（其下帖子在首页/详情/关注流/热榜同步消失）→ 恢复 → 删除（级联删帖）
 
 ## 项目结构
 
 ```
 ├── dbd-web/                    # 前端 Vue3
-│   ├── src/api/                # Axios + 按模块接口定义
-│   ├── src/views/              # 12 个页面（首页/详情/发帖/登录/吧/用户/搜索/排行/Feed/同城/活动/404）
+│   ├── src/api/                # Axios + 按模块接口定义（含 admin.js）
+│   ├── src/views/              # 14 个页面（首页/详情/发帖/登录/吧/用户/个人资料/管理后台/搜索/排行/Feed/同城/活动/404）
 │   ├── Dockerfile              # 前端镜像（Node 构建 + nginx）
 │   └── nginx.conf              # 静态托管 + /api 反代
 ├── dbd-server/                 # 后端 Spring Boot
 │   ├── src/main/java/com/dbd/
-│   │   ├── controller/         # 接口层（auth/post/bar/user/rank/feed/activity/nearby/search）
-│   │   ├── service/            # 业务层（缓存、Lua 调用、Feed 扩散、GEO）
+│   │   ├── controller/         # 接口层（auth/post/bar/user/rank/feed/activity/nearby/search/admin）
+│   │   ├── service/            # 业务层（缓存、Lua 调用、Feed 扩散、GEO、管理）
 │   │   ├── mapper/ entity/ dto/ vo/
 │   │   ├── interceptor/        # 登录拦截器（读可选登录/写必须登录）
+│   │   │                       # + 管理员拦截器（/api/admin/** 强制 role=1）
 │   │   └── utils/              # 全局 ID 生成器、Key 常量、UserContext
 │   ├── src/main/resources/
 │   │   ├── lua/seckill.lua     # 秒杀原子脚本（库存预扣 + 一人一单）
-│   │   └── db/init.sql         # 建库建表 + 演示数据
+│   │   └── db/                 # init.sql 建库建表 + 演示数据
+│   │                           # migration_admin.sql 存量库增量迁移（role 字段）
 │   └── Dockerfile              # 后端镜像（Maven 构建 + JRE）
 ├── docker-compose.yml          # MySQL 8 + Redis 7 + 后端 + 前端 一键编排
 ├── API.md                      # 接口约定文档（与 Swagger 一致）
