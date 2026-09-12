@@ -523,8 +523,14 @@
 #### 3.9.8 删除贴吧 🔒管理员
 `DELETE /api/admin/bar/{id}`
 - 成功：`{ "code": 1, "msg": "已删除" }`
-- **级联删除该吧下全部帖子**（每篇帖子再走 3.9.4 的完整清理），避免留下孤儿数据
-- 额外清理：吧信息缓存、`dbd:bar:member:{id}`、热吧榜成员、首页列表缓存
+- **完整级联清理**（避免留下任何指向已删吧的孤儿数据）：
+  1. 该吧下全部帖子 —— 每篇再走 3.9.4 的完整清理（楼层/点赞/收藏 + Redis 残留）
+  2. `follow` 中 `follow_bar_id = 该吧` 的关注关系 —— 吧已不存在，这些记录已无意义
+  3. `activity` 中 `bar_id = 该吧` 的秒杀活动，连同其 `activity_order` 订单记录
+  4. 上述活动的 Redis 键：`dbd:seckill:stock:{activityId}` 与全部
+     `dbd:seckill:order:{activityId}:*`（**SCAN 匹配，不用会阻塞 Redis 的 KEYS**）
+  5. 吧自身相关：吧信息缓存、`dbd:bar:member:{id}`、热吧榜 ZSet 成员、首页列表缓存
+- 缺少第 3 步时，首页「限量徽章 / 抢楼」入口会继续指向一个所属吧已不存在的活动
 
 ---
 

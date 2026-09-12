@@ -6,13 +6,19 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dbd.common.BusinessException;
 import com.dbd.common.PageResult;
 import com.dbd.dto.BarCreateDTO;
+import com.dbd.entity.Activity;
+import com.dbd.entity.ActivityOrder;
 import com.dbd.entity.Bar;
 import com.dbd.entity.Comment;
+import com.dbd.entity.Follow;
 import com.dbd.entity.Post;
 import com.dbd.entity.PostFavorite;
 import com.dbd.entity.PostLike;
+import com.dbd.mapper.ActivityMapper;
+import com.dbd.mapper.ActivityOrderMapper;
 import com.dbd.mapper.BarMapper;
 import com.dbd.mapper.CommentMapper;
+import com.dbd.mapper.FollowMapper;
 import com.dbd.mapper.PostFavoriteMapper;
 import com.dbd.mapper.PostLikeMapper;
 import com.dbd.mapper.PostMapper;
@@ -58,6 +64,11 @@ public class AdminServiceImpl implements AdminService {
     private final CommentMapper commentMapper;
     private final PostLikeMapper postLikeMapper;
     private final PostFavoriteMapper postFavoriteMapper;
+    /** 删吧时清理指向该吧的关注关系，避免留下孤儿数据 */
+    private final FollowMapper followMapper;
+    /** 删吧时清理关联活动及其秒杀订单 */
+    private final ActivityMapper activityMapper;
+    private final ActivityOrderMapper activityOrderMapper;
     private final StringRedisTemplate stringRedisTemplate;
     private final RedisIdWorker redisIdWorker;
     private final PostService postService;
@@ -65,6 +76,8 @@ public class AdminServiceImpl implements AdminService {
 
     public AdminServiceImpl(PostMapper postMapper, BarMapper barMapper, CommentMapper commentMapper,
                             PostLikeMapper postLikeMapper, PostFavoriteMapper postFavoriteMapper,
+                            FollowMapper followMapper, ActivityMapper activityMapper,
+                            ActivityOrderMapper activityOrderMapper,
                             StringRedisTemplate stringRedisTemplate, RedisIdWorker redisIdWorker,
                             PostService postService, BarService barService) {
         this.postMapper = postMapper;
@@ -72,6 +85,9 @@ public class AdminServiceImpl implements AdminService {
         this.commentMapper = commentMapper;
         this.postLikeMapper = postLikeMapper;
         this.postFavoriteMapper = postFavoriteMapper;
+        this.followMapper = followMapper;
+        this.activityMapper = activityMapper;
+        this.activityOrderMapper = activityOrderMapper;
         this.stringRedisTemplate = stringRedisTemplate;
         this.redisIdWorker = redisIdWorker;
         this.postService = postService;
@@ -224,20 +240,65 @@ public class AdminServiceImpl implements AdminService {
     @Override
     public void deleteBar(Long barId) {
         Bar bar = requireBar(barId);
-        // 级联删除该吧下全部帖子（含每帖的关联数据与 Redis 残留），
-        // 否则会留下指向已删吧的孤儿帖子——前台联表查询 JOIN bar 会直接查不到，
-        // 但管理端与统计里仍是脏数据。
+
+        // 1) 该吧下全部帖子（每帖再走 deletePost 的完整清理：楼层/点赞/收藏 + Redis 残留）
         List<Post> posts = postMapper.selectList(new LambdaQueryWrapper<Post>().eq(Post::getBarId, barId));
         for (Post post : posts) {
             deletePost(post.getId());
         }
+
+        // 2) 指向该吧的关注关系：吧已不存在，这些记录再无意义
+        followMapper.delete(new LambdaQueryWrapper<Follow>().eq(Follow::getFollowBarId, barId));
+
+        // 3) 关联的秒杀活动：连同订单与 Redis 库存/一人一单标记一并清理
+        List<Activity> activities = activityMapper.selectList(
+                new LambdaQueryWrapper<Activity>().eq(Activity::getBarId, barId));
+        for (Activity activity : activities) {
+            purgeActivity(activity.getId());
+        }
+
+        // 4) 吧主记录
         barMapper.deleteById(barId);
-        // 吧相关 Redis：缓存、计数、热吧榜成员
+
+        // 5) 吧相关 Redis：信息缓存、关注计数、热吧榜成员、首页列表缓存
         barService.evictBarCache(barId);
         stringRedisTemplate.delete(RedisKeyConstants.BAR_MEMBER + barId);
         stringRedisTemplate.opsForZSet().remove(RedisKeyConstants.RANK_HOT_BAR, String.valueOf(barId));
         evictHomeListCache();
-        log.warn("管理员物理删除贴吧 barId={}, name={}, 级联删除帖子 {} 篇", barId, bar.getName(), posts.size());
+
+        log.warn("管理员物理删除贴吧 barId={}, name={}；级联删除 帖子 {} 篇、活动 {} 个、关注关系若干",
+                barId, bar.getName(), posts.size(), activities.size());
+    }
+
+    /**
+     * 清理单个秒杀活动：订单表 + Redis 库存与一人一单标记 + 活动主记录。
+     * <p>不做这步，删除吧之后首页的「限量徽章 / 抢楼」入口仍会指向一个
+     * 所属吧已不存在的活动。</p>
+     */
+    private void purgeActivity(Long activityId) {
+        activityOrderMapper.delete(new LambdaQueryWrapper<ActivityOrder>()
+                .eq(ActivityOrder::getActivityId, activityId));
+        stringRedisTemplate.delete(RedisKeyConstants.SECKILL_STOCK + activityId);
+        // 一人一单标记按用户分散：dbd:seckill:order:{activityId}:{userId}
+        removeKeysByPattern(RedisKeyConstants.SECKILL_ORDER + activityId + ":*");
+        activityMapper.deleteById(activityId);
+    }
+
+    /**
+     * 按 pattern 批量删除 key。
+     * <p>使用 SCAN 游标而非 KEYS：KEYS 会阻塞 Redis 单线程，key 多时直接拖垮服务。</p>
+     */
+    private void removeKeysByPattern(String pattern) {
+        Set<String> keys = new HashSet<>();
+        try (Cursor<String> cursor = stringRedisTemplate.scan(
+                ScanOptions.scanOptions().match(pattern).count(200).build())) {
+            while (cursor.hasNext()) {
+                keys.add(cursor.next());
+            }
+        }
+        if (!keys.isEmpty()) {
+            stringRedisTemplate.delete(keys);
+        }
     }
 
     /* ==================== 工具 ==================== */
