@@ -1,0 +1,26 @@
+# ============================================================
+# 统一换行符为 LF
+#
+# 本项目部署到 Linux / Docker，必须使用 LF：
+#   - Dockerfile 的行连接续符（&& \）若变成 "\<CR><LF>"，
+#     可能把 \r 带进 shell 命令导致构建失败
+#   - shell 脚本带 CRLF 会直接执行失败
+#   - nginx.conf / *.sql 带 CRLF 也属于不必要的风险
+#
+# 此文件使换行符不受各人 git config core.autocrlf 影响，
+# 保证在任何平台 clone 出来的文件都是 LF。
+# ============================================================
+
+# 默认：文本文件一律 LF 入库、LF 检出
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.jar   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
