@@ -32,8 +32,15 @@ import java.util.concurrent.ThreadLocalRandom;
 @Service
 public class AuthServiceImpl implements AuthService {
 
-    /** 账号格式：手机号 11 位，或管理员标识；统一放宽为 6-20 位数字 */
+    /** 账号格式：手机号 11 位，或管理员标识；登录入参统一放宽为 6-20 位数字 */
     private static final String ACCOUNT_PATTERN = "^\\d{6,20}$";
+
+    /**
+     * 真实手机号格式：**注册（含登录时的自动注册）必须满足**。
+     * <p>不能复用 {@link #ACCOUNT_PATTERN}——那个是为兼容管理员标识（如 2485617328）
+     * 而放宽的，若用在注册路径会允许 "111111" 这类假号批量注册（线上已实际发生过）。</p>
+     */
+    private static final String PHONE_PATTERN = "^1\\d{10}$";
 
     private final StringRedisTemplate stringRedisTemplate;
     private final RedisIdWorker redisIdWorker;
@@ -140,8 +147,18 @@ public class AuthServiceImpl implements AuthService {
         return count != null && count > 0;
     }
 
-    /** 注册用户：主键走全局 ID 生成器；验证码登录无密码，存随机串占位 */
+    /**
+     * 注册用户：主键走全局 ID 生成器；验证码登录无密码，存随机串占位。
+     *
+     * <p><b>这里必须再校验一次手机号格式。</b>{@link LoginDTO} 的账号校验为兼容
+     * 管理员标识放宽成了 6-20 位数字，而登录接口对**不存在的账号会自动注册**——
+     * 若不在此收口，任何人都能用 "111111" 这类假号注册出账号（线上已实际出现）。
+     * 管理员标识不受影响：它已存在于库中，走 findByPhone 分支，不会进入本方法。</p>
+     */
     private User createUser(String phone, String nickname) {
+        if (!phone.matches(PHONE_PATTERN)) {
+            throw BusinessException.param("账号格式不正确，请输入 11 位手机号");
+        }
         User user = new User();
         user.setId(redisIdWorker.nextId("user"));
         user.setPhone(phone);
