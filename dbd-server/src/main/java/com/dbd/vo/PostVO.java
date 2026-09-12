@@ -2,6 +2,8 @@ package com.dbd.vo;
 
 import com.dbd.entity.Post;
 import com.dbd.entity.User;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.Data;
 
 import java.time.format.DateTimeFormatter;
@@ -15,8 +17,14 @@ import java.util.List;
 @Data
 public class PostVO {
 
+    /** 帖子ID：序列化为字符串，避免 JS 大整数精度丢失（见 {@link UserVO#getId()} 说明） */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long id;
+
+    /** 所属吧ID：同样为标识类字段，需序列化为字符串 */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long barId;
+
     private String barName;
     private UserVO author;
     private String title;
@@ -24,11 +32,14 @@ public class PostVO {
     private List<String> images;
     private Boolean isTop;
     private Integer status;
+
+    /* 以下均为计数类字段，保持 JSON 数字（前端用于展示与分页，不参与 ID 比较） */
     private Long likeCount;
     private Long favoriteCount;
     private Long commentCount;
     private Long viewCount;
     private Long uvCount;
+
     private Boolean isLiked;
     private Boolean isFavorited;
     private String createdAt;

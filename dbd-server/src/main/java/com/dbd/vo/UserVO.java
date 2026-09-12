@@ -1,6 +1,8 @@
 package com.dbd.vo;
 
 import com.dbd.entity.User;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.Data;
 
 import java.time.format.DateTimeFormatter;
@@ -12,6 +14,18 @@ import java.time.format.DateTimeFormatter;
 @Data
 public class UserVO {
 
+    /**
+     * 用户ID —— **序列化为 JSON 字符串**。
+     *
+     * <p>原因：本项目主键由 Redis 全局 ID 生成器产出（时间戳+自增，18-19 位），
+     * 超过 JavaScript 的 {@code Number.MAX_SAFE_INTEGER}（2^53-1，16 位）。
+     * 若按 JSON 数字输出，浏览器 {@code JSON.parse} 会四舍五入导致 ID 错位
+     * （例如 …193 变成 …192），表现为"选中了吧却提示吧不存在"这类问题。</p>
+     *
+     * <p>因此**标识类** Long 字段一律用 ToStringSerializer；**计数类**字段保持数字，
+     * 避免影响前端数值运算与分页组件。</p>
+     */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long id;
 
     private String nickname;

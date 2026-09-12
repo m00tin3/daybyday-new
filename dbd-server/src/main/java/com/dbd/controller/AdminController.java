@@ -87,7 +87,8 @@ public class AdminController {
     @PostMapping("/bar")
     public Result<Map<String, Object>> createBar(@Valid @RequestBody BarCreateDTO dto) {
         Long id = adminService.createBar(dto);
-        return Result.ok(Map.of("id", id), "创建成功");
+        // 同上：新建吧的 ID 会回传前端用于发帖等后续操作，必须按字符串传输
+        return Result.ok(Map.of("id", String.valueOf(id)), "创建成功");
     }
 
     @Operation(summary = "隐藏贴吧 🔒管理员（status=0，前台不可见且移出热吧榜）")

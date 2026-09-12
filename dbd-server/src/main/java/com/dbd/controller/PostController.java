@@ -52,9 +52,12 @@ public class PostController {
 
     @Operation(summary = "发帖 🔒")
     @PostMapping
-    public Result<Map<String, Long>> create(@Valid @RequestBody PostDTO dto) {
+    public Result<Map<String, Object>> create(@Valid @RequestBody PostDTO dto) {
         Long id = postService.create(dto);
-        return Result.ok(Map.of("id", id), "发布成功");
+        // id 必须按字符串下发：Redis 全局 ID 为 18-19 位 Long，超出 JS 安全整数范围
+        // （Number.MAX_SAFE_INTEGER 仅 16 位）。若以数字传输，前端
+        // router.push(`/post/${id}`) 会拿到被四舍五入的错误 ID，跳到不存在的帖子
+        return Result.ok(Map.of("id", String.valueOf(id)), "发布成功");
     }
 
     @Operation(summary = "点赞/取消点赞（幂等切换）🔒")

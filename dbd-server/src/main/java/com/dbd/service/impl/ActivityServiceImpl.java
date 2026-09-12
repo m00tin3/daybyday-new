@@ -115,7 +115,8 @@ public class ActivityServiceImpl implements ActivityService {
 
         // 抢楼楼层号 = 已抢数量 = stock - remainStock（限量徽章不返回楼层）
         Map<String, Object> result = new HashMap<>();
-        result.put("orderId", order.getId());
+        // orderId 为 Redis 全局 ID（18-19 位），转字符串避免前端 JS 精度丢失
+        result.put("orderId", String.valueOf(order.getId()));
         if (activity.getType() == 1) {
             String remain = stringRedisTemplate.opsForValue().get(stockKey);
             int remainStock = remain == null ? activity.getStock() : Integer.parseInt(remain);

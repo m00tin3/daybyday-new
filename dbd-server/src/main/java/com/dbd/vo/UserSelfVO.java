@@ -1,6 +1,8 @@
 package com.dbd.vo;
 
 import com.dbd.entity.User;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.Data;
 
 import java.time.format.DateTimeFormatter;
@@ -15,6 +17,8 @@ import java.time.format.DateTimeFormatter;
 @Data
 public class UserSelfVO {
 
+    /** 用户ID：序列化为字符串，避免 JS 大整数精度丢失（见 {@link UserVO#getId()} 说明） */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long id;
 
     private String nickname;

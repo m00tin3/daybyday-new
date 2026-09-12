@@ -416,7 +416,8 @@ public class PostServiceImpl implements PostService {
         deleteHomeListCache();
 
         Map<String, Object> result = new HashMap<>();
-        result.put("id", comment.getId());
+        // 楼层 ID 同为 Redis 全局 ID，转字符串避免前端 JS 精度丢失
+        result.put("id", String.valueOf(comment.getId()));
         result.put("floorNo", floorNo);
         return result;
     }

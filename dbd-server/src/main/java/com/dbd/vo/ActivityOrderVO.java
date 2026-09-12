@@ -1,6 +1,8 @@
 package com.dbd.vo;
 
 import com.dbd.entity.ActivityOrder;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.Data;
 
 import java.time.format.DateTimeFormatter;
@@ -11,9 +13,18 @@ import java.time.format.DateTimeFormatter;
 @Data
 public class ActivityOrderVO {
 
+    /** 订单ID：序列化为字符串，避免 JS 大整数精度丢失（见 {@link UserVO#getId()} 说明） */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long id;
+
+    /** 活动ID：标识类字段 */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long activityId;
+
+    /** 用户ID：标识类字段 */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long userId;
+
     private Integer status;
     private String createdAt;
 
