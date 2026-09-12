@@ -19,7 +19,7 @@ const showTopbar = computed(() => route.name !== 'login')
           <router-link to="/">首页</router-link>
           <router-link to="/feed">关注</router-link>
           <router-link to="/rank">排行</router-link>
-          <router-link to="/nearby">同城</router-link>
+          <router-link to="/city">城市</router-link>
           <router-link to="/search">搜索</router-link>
         </nav>
         <div class="topbar-right">

@@ -1,9 +1,17 @@
 // 帖子模块接口（对应 API.md §3.2）
 import request from '../utils/request'
 
-/** 帖子列表 GET /api/post/list（可按 barId/userId/keyword 筛选） */
+/** 帖子列表 GET /api/post/list（可按 barId/userId/city/keyword 筛选） */
 export function getPostList(params) {
   return request.get('/post/list', { params })
+}
+
+/**
+ * 有帖子的城市列表（按帖子数降序）GET /api/post/cities
+ * 用于「按城市浏览」页；后端带 Redis 缓存。
+ */
+export function getPostCities() {
+  return request.get('/post/cities')
 }
 
 /** 帖子详情 GET /api/post/{id} */

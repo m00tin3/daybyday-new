@@ -5,6 +5,7 @@ import com.dbd.common.Result;
 import com.dbd.dto.CommentDTO;
 import com.dbd.dto.PostDTO;
 import com.dbd.service.PostService;
+import com.dbd.vo.CityStatVO;
 import com.dbd.vo.CommentVO;
 import com.dbd.vo.PostVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -34,14 +36,21 @@ public class PostController {
         this.postService = postService;
     }
 
-    @Operation(summary = "帖子列表（可按吧/用户/关键词筛选，分页）")
+    @Operation(summary = "帖子列表（可按吧/用户/城市/关键词筛选，分页）")
     @GetMapping("/list")
     public Result<PageResult<PostVO>> list(@RequestParam(required = false) Long barId,
                                            @RequestParam(required = false) Long userId,
+                                           @RequestParam(required = false) String city,
                                            @RequestParam(required = false) String keyword,
                                            @RequestParam(required = false, defaultValue = "1") Integer page,
                                            @RequestParam(required = false, defaultValue = "10") Integer size) {
-        return Result.ok(postService.page(barId, userId, keyword, page, size));
+        return Result.ok(postService.page(barId, userId, city, keyword, page, size));
+    }
+
+    @Operation(summary = "有帖子的城市列表（按帖子数降序，用于「按城市浏览」）")
+    @GetMapping("/cities")
+    public Result<List<CityStatVO>> cities() {
+        return Result.ok(postService.cities());
     }
 
     @Operation(summary = "帖子详情（缓存三件套 + UV/浏览计数）")

@@ -32,6 +32,13 @@ public final class RedisKeyConstants {
     /** 首页列表缓存：dbd:post:list:home:{page}（带筛选条件的不缓存） */
     public static final String POST_LIST_HOME = "dbd:post:list:home:";
 
+    /**
+     * 城市列表缓存：dbd:post:cities → CityStatVO JSON 数组（有帖子的城市 + 数量）。
+     * 该结果由 GROUP BY 聚合得出，访问频繁但变化不频繁，适合短 TTL 缓存。
+     */
+    public static final String POST_CITIES = "dbd:post:cities";
+    public static final Duration POST_CITIES_TTL = Duration.ofMinutes(5);
+
     /** 帖子点赞 Set：dbd:post:like:{postId} → userId 集合 */
     public static final String POST_LIKE = "dbd:post:like:";
     /** 帖子收藏 Set：dbd:post:favorite:{postId} → userId 集合 */

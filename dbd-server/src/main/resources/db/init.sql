@@ -55,8 +55,11 @@ CREATE TABLE IF NOT EXISTS `post` (
   `title`        VARCHAR(64)  NOT NULL COMMENT '标题',
   `content`      MEDIUMTEXT   NOT NULL COMMENT '正文',
   `images`       VARCHAR(1024) DEFAULT NULL COMMENT '图片URL列表（JSON数组）',
-  `longitude`    DECIMAL(10,6) DEFAULT NULL COMMENT '经度（同城 GEO，可空）',
-  `latitude`     DECIMAL(10,6) DEFAULT NULL COMMENT '纬度（同城 GEO，可空）',
+  `city`         VARCHAR(32)  DEFAULT NULL COMMENT '城市（发帖时手动填写，用于按城市浏览）',
+  -- 以下两列为 GEO 同城所用；当前因无地图 SDK，经纬度手工输入体验差，该功能已封存。
+  -- 字段保留以便将来恢复，届时发帖重新写入即可。
+  `longitude`    DECIMAL(10,6) DEFAULT NULL COMMENT '经度（GEO 同城，功能已封存）',
+  `latitude`     DECIMAL(10,6) DEFAULT NULL COMMENT '纬度（GEO 同城，功能已封存）',
   `status`       TINYINT      NOT NULL DEFAULT 1 COMMENT '状态 1正常 0删除 2精华 3隐藏（隐藏态前台全链路不可见，仅管理后台可见）',
   `is_top`       TINYINT      NOT NULL DEFAULT 0 COMMENT '是否置顶 0否 1是',
   `like_count`   INT          NOT NULL DEFAULT 0 COMMENT '点赞数（Redis 为准）',
@@ -71,6 +74,7 @@ CREATE TABLE IF NOT EXISTS `post` (
   PRIMARY KEY (`id`),
   KEY `idx_bar_status_created` (`bar_id`, `status`, `created_at`),
   KEY `idx_user_created` (`user_id`, `created_at`),
+  KEY `idx_city` (`city`),
   KEY `idx_score` (`score`)
 ) ENGINE=InnoDB COMMENT='帖子';
 

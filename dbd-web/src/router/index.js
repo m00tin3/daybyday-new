@@ -26,8 +26,12 @@ const routes = [
   { path: '/rank', name: 'rank', component: () => import('../views/RankView.vue') },
   // 关注 Feed 流：需登录
   { path: '/feed', name: 'feed', component: () => import('../views/FeedView.vue'), meta: { requiresAuth: true } },
-  // 同城（GEO）
-  { path: '/nearby', name: 'nearby', component: () => import('../views/NearbyView.vue') },
+  // 按城市浏览（替代已封存的 GEO 同城）
+  { path: '/city', name: 'city', component: () => import('../views/CityView.vue') },
+  // 原「同城」路由已随 GEO 功能一并封存：导航入口已移除，路由也下线。
+  // 恢复方式：打开下面这行，并在 App.vue 导航与 HomeView 侧栏加回链接即可
+  //（NearbyView.vue 与后端 /api/nearby 代码均保留未删）。
+  // { path: '/nearby', name: 'nearby', component: () => import('../views/NearbyView.vue') },
   // 抢楼 / 徽章秒杀
   { path: '/activity/:id', name: 'activity', component: () => import('../views/ActivityView.vue') },
   // 兜底 404

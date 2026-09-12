@@ -1,5 +1,9 @@
 <script setup>
-// 发帖页：选择吧 + 标题 + 正文 + 可选位置（对应 API.md §3.2.3；带坐标则写入 GEO 同城）
+// 发帖页：选择吧 + 标题 + 正文 + 城市（对应 API.md §3.2.3）
+//
+// 变更说明：原先这里是「可选经纬度」（GEO 同城）。因缺少地图 SDK，无法把用户
+// 输入的地址转成经纬度，要求手输坐标体验差且无法校验，故改为手动填写城市；
+// GEO 相关代码保留但功能已封存。
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -11,10 +15,16 @@ const bars = ref([])
 const barId = ref(null)
 const title = ref('')
 const content = ref('')
-const x = ref('')
-const y = ref('')
-const locating = ref(false)
+const city = ref('')
 const submitting = ref(false)
+
+/** 常用城市快捷标签：点一下填入，也可手打任意城市 */
+const HOT_CITIES = ['北京', '上海', '广州', '深圳', '杭州', '成都', '武汉', '南京', '西安', '重庆']
+
+function pickCity(c) {
+  // 再次点击已选中的标签则取消选择
+  city.value = city.value === c ? '' : c
+}
 
 onMounted(async () => {
   try {
@@ -22,28 +32,6 @@ onMounted(async () => {
     bars.value = res.data ?? []
   } catch { /* 无吧列表时仍可输入 */ }
 })
-
-/** 浏览器定位（可选，失败可手动输入） */
-function locate() {
-  if (!navigator.geolocation) {
-    ElMessage.warning('当前浏览器不支持定位')
-    return
-  }
-  locating.value = true
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      x.value = pos.coords.longitude.toFixed(6)
-      y.value = pos.coords.latitude.toFixed(6)
-      locating.value = false
-      ElMessage.success('定位成功，发帖后将出现在附近帖子')
-    },
-    () => {
-      locating.value = false
-      ElMessage.warning('定位失败，可手动输入经纬度')
-    },
-    { timeout: 8000 }
-  )
-}
 
 async function submit() {
   if (!barId.value) {
@@ -58,19 +46,10 @@ async function submit() {
     ElMessage.warning('请填写内容')
     return
   }
-  // 坐标：可都不填；都填则需合法数字
   const payload = { barId: barId.value, title: title.value.trim(), content: content.value.trim() }
-  const hasX = x.value.trim() !== ''
-  const hasY = y.value.trim() !== ''
-  if (hasX || hasY) {
-    const xv = Number(x.value)
-    const yv = Number(y.value)
-    if (!hasX || !hasY || Number.isNaN(xv) || Number.isNaN(yv)) {
-      ElMessage.warning('请同时填写正确的经纬度，或都留空')
-      return
-    }
-    payload.x = xv
-    payload.y = yv
+  // 城市可选：留空则不入库，帖子不会出现在任何城市的筛选结果里
+  if (city.value.trim() !== '') {
+    payload.city = city.value.trim()
   }
   submitting.value = true
   try {
@@ -99,11 +78,18 @@ async function submit() {
         <el-form-item label="正文">
           <el-input v-model="content" type="textarea" :rows="10" maxlength="50000" show-word-limit placeholder="写点什么…" />
         </el-form-item>
-        <el-form-item label="位置（可选，发帖后进入同城·附近帖子）">
-          <div class="geo-row">
-            <el-input v-model="x" placeholder="经度，如 116.397" style="width: 170px" />
-            <el-input v-model="y" placeholder="纬度，如 39.908" style="width: 170px" />
-            <el-button :loading="locating" @click="locate">📍 使用我的位置</el-button>
+        <el-form-item label="城市（可选，填了才能被「城市」页检索到）">
+          <div class="city-row">
+            <el-input v-model="city" placeholder="如：北京" maxlength="32" style="width: 200px" clearable />
+            <div class="city-tags">
+              <el-tag
+                v-for="c in HOT_CITIES"
+                :key="c"
+                class="city-tag"
+                :effect="city === c ? 'dark' : 'plain'"
+                @click="pickCity(c)"
+              >{{ c }}</el-tag>
+            </div>
           </div>
         </el-form-item>
         <el-form-item>
@@ -118,5 +104,7 @@ async function submit() {
 <style scoped>
 .new-post { max-width: 760px; margin: 24px auto; }
 .page-title { color: #4e6ef2; margin-bottom: 20px; }
-.geo-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.city-row { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.city-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.city-tag { cursor: pointer; user-select: none; }
 </style>

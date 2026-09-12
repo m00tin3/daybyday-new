@@ -107,7 +107,8 @@ public class BarServiceImpl implements BarService {
     @Override
     public PageResult<PostVO> posts(Long id, Integer page, Integer size) {
         requireBar(id);
-        return postService.page(id, null, null, page, size);
+        // 参数依次为 barId / userId / city / keyword
+        return postService.page(id, null, null, null, page, size);
     }
 
     /* ==================== 签到（BitMap） ==================== */

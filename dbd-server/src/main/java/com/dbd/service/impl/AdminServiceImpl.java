@@ -378,11 +378,13 @@ public class AdminServiceImpl implements AdminService {
         }
     }
 
-    /** 清首页列表缓存（帖子/吧变动后均需调用，否则列表 60 秒内仍是旧数据） */
+    /** 清首页列表缓存 + 城市列表缓存（帖子/吧变动后均需调用，否则缓存 TTL 内仍是旧数据） */
     private void evictHomeListCache() {
         for (int p = 1; p <= HOME_LIST_CACHE_PAGES; p++) {
             stringRedisTemplate.delete(RedisKeyConstants.POST_LIST_HOME + p);
         }
+        // 帖子/吧的增删或状态变化都会改变"各城市可见帖子数"，城市列表缓存一并失效
+        stringRedisTemplate.delete(RedisKeyConstants.POST_CITIES);
     }
 
     private int normalizePage(Integer page) {

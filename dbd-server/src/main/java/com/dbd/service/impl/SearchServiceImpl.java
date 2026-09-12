@@ -38,6 +38,6 @@ public class SearchServiceImpl implements SearchService {
         }
         // 搜索即记录热搜（ZINCRBY 加 1）
         stringRedisTemplate.opsForZSet().incrementScore(RedisKeyConstants.SEARCH_HOT, keyword, 1);
-        return postService.page(null, null, keyword, page, size);
+        return postService.page(null, null, null, keyword, page, size);
     }
 }

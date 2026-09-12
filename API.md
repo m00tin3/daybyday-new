@@ -108,19 +108,26 @@
 ### 2.3 PostVO 帖子
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| id | Long | 帖子ID |
-| barId | Long | 所属吧ID |
+| id | Long | 帖子ID（**JSON 中序列化为字符串**，避免 JS 大整数精度丢失） |
+| barId | Long | 所属吧ID（同上，字符串） |
 | barName | String | 吧名称（冗余，列表展示） |
 | author | UserVO | 作者（含 id/nickname/icon） |
 | title | String | 标题 |
 | content | String | 正文（列表接口只返回截断摘要，详情接口返回全文） |
 | images | String[] | 图片 URL 列表 |
+| city | String | 城市（发帖时手动填写，用于「按城市浏览」；可空） |
 | isTop | Boolean | 是否置顶 |
-| status | Integer | 1 正常 0 删除 2 精华 |
-| likeCount / favoriteCount / commentCount / viewCount | Long | 计数（Redis） |
+| status | Integer | 1 正常 0 删除 2 精华 3 隐藏 |
+| likeCount / favoriteCount / commentCount / viewCount | Long | 计数（Redis，**JSON 中保持数字**） |
 | uvCount | Long | 独立访客数（HyperLogLog，可选展示） |
 | isLiked / isFavorited | Boolean | 当前用户点赞/收藏状态（未登录 false） |
 | createdAt | String | 发布时间 |
+| distance | Double | 距查询坐标的距离（米）——**仅 GEO 同城接口返回，该功能已封存** |
+
+> **为什么 ID 是字符串**：主键由 Redis 全局 ID 生成器产生（18-19 位），
+> 超过 JavaScript 的 `Number.MAX_SAFE_INTEGER`（16 位）。按数字下发会被浏览器
+> 四舍五入导致 ID 错位（如 …193 变 …192），出现「选中了吧却提示吧不存在」。
+> 因此**标识类** Long 一律序列化为字符串，**计数类**保持数字不影响前端运算。
 
 ### 2.4 CommentVO 楼层
 | 字段 | 类型 | 说明 |
@@ -214,14 +221,24 @@
 |---|---|---|---|
 | barId | Long | 否 | 指定吧内帖子 |
 | userId | Long | 否 | 指定用户的帖子 |
+| city | String | 否 | 按城市筛选（对应发帖时填写的城市；空串视为不筛选） |
 | keyword | String | 否 | 关键词（简单 LIKE，复杂检索阶段二做热搜即可） |
 | page | Integer | 否 | 默认 1 |
 | size | Integer | 否 | 默认 10 |
 
 - 成功：`{ "code": 1, "data": { "list": [ PostVO ], "total": Long, "page": 1, "size": 10 } }`
 - 排序：置顶优先 → `lastCommentTime` 倒序（首页）；吧内同规则
-- Redis：首页（无筛选条件）走列表缓存 `dbd:post:list:home:{page}`（TTL 60 秒），发帖后删除；带筛选条件直查 MySQL。生产可升级"延迟双删"保证一致性
+- Redis：**无任何筛选条件**时走首页列表缓存 `dbd:post:list:home:{page}`（TTL 60 秒），发帖后删除；
+  带条件直查 MySQL（不为条件组合各缓存一份）。生产可升级"延迟双删"保证一致性
 - 失败：无 → 空列表
+
+#### 3.2.1.1 有帖子的城市列表
+`GET /api/post/cities`
+- 成功：`{ "code": 1, "data": [ { "city": "北京", "postCount": 3 } ] }`（按帖子数降序，最多 50 个）
+- **口径与列表严格一致**：只统计 `status IN (1,2)` 且所属吧 `status=1` 的帖子，
+  否则会出现"城市列表里有这个城市、点进去却是空的"
+- Redis：`dbd:post:cities` 缓存 5 分钟；发帖 / 管理端隐藏删除 / 删吧后均失效重建
+- 用途：前端「城市」页的城市标签（含帖子数）
 
 #### 3.2.2 帖子详情
 `GET /api/post/{id}`
@@ -237,11 +254,13 @@
 | title | String | 是 | 标题（1-64 字符） |
 | content | String | 是 | 正文（1-50000 字符） |
 | images | String[] | 否 | 图片 URL 列表 |
-| x | Double | 否 | 经度（可选，带坐标则写入 GEO 同城） |
-| y | Double | 否 | 纬度（可选，带坐标则写入 GEO 同城） |
+| city | String | 否 | 城市（最长 32 字符），用于「按城市浏览」；不填则不会被城市检索到 |
 
-- 成功：`{ "code": 1, "msg": "发布成功", "data": { "id": Long } }`
-- Redis：ID 生成（`dbd:id:post:{yyyy:MM:dd}` 时间戳 + 自增）；防重复提交 `SETNX dbd:repeat:post:{userId}`（3 秒，先校验后上锁）→ 3002；发布后删除列表缓存；带 x/y 时 `GEOADD dbd:geo:post`；同步触发 Feed 写扩散（推送给关注该作者/该吧的粉丝）
+- 成功：`{ "code": 1, "msg": "发布成功", "data": { "id": "636661625264275458" } }`（**id 为字符串**）
+- Redis：ID 生成（`dbd:id:post:{yyyy:MM:dd}` 时间戳 + 自增）；
+  防重复提交 `SETNX dbd:repeat:post:{userId}`（3 秒，先校验后上锁）→ 3002；
+  发布后删除首页列表缓存与城市列表缓存；同步触发 Feed 写扩散（推送给关注该作者/该吧的粉丝）
+- **原 x/y 经纬度参数已移除**：GEO 同城封存后不再执行 `GEOADD dbd:geo:post`，详见 §3.8
 - 失败：参数不合法 → 2001；吧不存在 → 2002
 
 #### 3.2.4 点赞/取消点赞 🔒
@@ -433,7 +452,19 @@
 
 ### 3.8 同城模块 `nearby`（对应前端 `src/api/activity.js`）
 
-#### 3.8.1 附近帖子
+> **⚠️ 该模块功能已封存（代码保留、接口仍可调用，但前端入口已移除）**
+>
+> **封存原因**：GEO 需要地图 SDK 把用户填写的地址转换成经纬度。拿不到 SDK 时
+> 只能要求用户手输坐标，体验差且无法校验，因此发帖改为手动填写城市
+> （`post.city`，见 §3.2.3），前端「同城」入口替换为「按城市浏览」（§3.2.1.1）。
+>
+> **当前状态**：发帖不再执行 `GEOADD`，`dbd:geo:post` 不会有新数据；
+> 本接口除历史带坐标的帖子外返回空。
+>
+> **恢复方式**：前端加回入口（router 中 `/nearby` 已注释掉，`NearbyView.vue` 保留），
+> 发帖处恢复 GEOADD 即可，后端本模块无需改动。经纬度字段也保留在 `post` 表中。
+
+#### 3.8.1 附近帖子（已封存）
 `GET /api/nearby/post`
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -542,7 +573,8 @@
 | `auth.loginByCode` | /api/auth/login | POST | - |
 | `auth.register` | /api/auth/register | POST | - |
 | `auth.getUserInfo` | /api/auth/me | GET | 🔒（特例：未登录返回 401） |
-| `post.getPostList` | /api/post/list | GET | - |
+| `post.getPostList` | /api/post/list | GET | -（支持 city 参数按城市筛选） |
+| `post.getPostCities` | /api/post/cities | GET | -（有帖子的城市及数量，Redis 缓存） |
 | `post.getPostDetail` | /api/post/{id} | GET | - |
 | `post.createPost` | /api/post | POST | 🔒 |
 | `post.likePost` | /api/post/{id}/like | POST | 🔒 |
@@ -575,7 +607,7 @@
 | `activity.grabActivity` | /api/activity/{id}/grab | POST | 🔒 |
 | `activity.getHotSearch` | /api/search/hot | GET | - |
 | `activity.searchPosts` | /api/search/post | GET | - |
-| `activity.getNearbyPosts` | /api/nearby/post | GET | - |
+| `activity.getNearbyPosts` | /api/nearby/post | GET | -（⚠️ GEO 同城已封存：接口保留、前端入口已移除） |
 
 ---
 

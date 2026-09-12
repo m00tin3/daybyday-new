@@ -24,6 +24,7 @@ import com.dbd.service.PostService;
 import com.dbd.utils.RedisIdWorker;
 import com.dbd.utils.RedisKeyConstants;
 import com.dbd.utils.UserContext;
+import com.dbd.vo.CityStatVO;
 import com.dbd.vo.CommentVO;
 import com.dbd.vo.PostRow;
 import com.dbd.vo.PostVO;
@@ -31,7 +32,6 @@ import com.dbd.vo.UserVO;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.geo.Point;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -99,28 +99,57 @@ public class PostServiceImpl implements PostService {
     /* ==================== 列表 ==================== */
 
     @Override
-    public PageResult<PostVO> page(Long barId, Long userId, String keyword, Integer page, Integer size) {
+    public PageResult<PostVO> page(Long barId, Long userId, String city, String keyword, Integer page, Integer size) {
         page = page == null || page < 1 ? 1 : page;
         size = size == null || size < 1 ? 10 : Math.min(size, 50);
+        // 城市参数：去掉首尾空白，空串按"不筛选"处理，避免 ?city= 命中空城市
+        String cityFilter = city == null || city.isBlank() ? null : city.trim();
 
-        // 首页（无筛选条件）走列表缓存，降低 DB 压力
-        if (barId == null && userId == null && (keyword == null || keyword.isBlank())) {
+        // 首页（无任何筛选条件）走列表缓存，降低 DB 压力；
+        // 一旦带上城市等条件就直查，避免为每种条件组合各缓存一份
+        if (barId == null && userId == null && cityFilter == null && (keyword == null || keyword.isBlank())) {
             String cacheKey = RedisKeyConstants.POST_LIST_HOME + page;
             String cached = stringRedisTemplate.opsForValue().get(cacheKey);
             if (cached != null) {
                 return parsePage(cached, page, size);
             }
-            PageResult<PostVO> result = queryPage(null, null, null, page, size);
+            PageResult<PostVO> result = queryPage(null, null, null, null, page, size);
             stringRedisTemplate.opsForValue().set(cacheKey, serialize(result), LIST_TTL);
             return result;
         }
-        return queryPage(barId, userId, keyword, page, size);
+        return queryPage(barId, userId, cityFilter, keyword, page, size);
     }
 
-    private PageResult<PostVO> queryPage(Long barId, Long userId, String keyword, Integer page, Integer size) {
-        IPage<PostRow> rows = postMapper.selectPostPage(new Page<>(page, size), barId, userId, keyword);
+    private PageResult<PostVO> queryPage(Long barId, Long userId, String city, String keyword,
+                                         Integer page, Integer size) {
+        IPage<PostRow> rows = postMapper.selectPostPage(new Page<>(page, size), barId, userId, city, keyword);
         List<PostVO> list = rows.getRecords().stream().map(PostVO::fromRow).toList();
         return PageResult.of(list, rows.getTotal(), page, size);
+    }
+
+    /* ==================== 按城市浏览 ==================== */
+
+    @Override
+    public List<CityStatVO> cities() {
+        String cached = stringRedisTemplate.opsForValue().get(RedisKeyConstants.POST_CITIES);
+        if (cached != null) {
+            try {
+                return objectMapper.readValue(cached,
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, CityStatVO.class));
+            } catch (JsonProcessingException e) {
+                log.warn("城市列表缓存反序列化失败，回源查库", e);
+                stringRedisTemplate.delete(RedisKeyConstants.POST_CITIES);
+            }
+        }
+        List<CityStatVO> list = postMapper.selectCityStats();
+        try {
+            stringRedisTemplate.opsForValue()
+                    .set(RedisKeyConstants.POST_CITIES, objectMapper.writeValueAsString(list),
+                            RedisKeyConstants.POST_CITIES_TTL);
+        } catch (JsonProcessingException e) {
+            log.warn("城市列表缓存序列化失败", e);
+        }
+        return list;
     }
 
     /* ==================== 详情（缓存三件套） ==================== */
@@ -266,6 +295,9 @@ public class PostServiceImpl implements PostService {
         post.setTitle(dto.getTitle());
         post.setContent(dto.getContent());
         post.setImages(serializeImages(dto.getImages()));
+        // 城市：发帖时手动填写，用于"按城市浏览"（替代已封存的 GEO 同城）。
+        // 空串统一落 NULL，避免出现 city='' 这种既不是有效城市又非空的脏值
+        post.setCity(dto.getCity() == null || dto.getCity().isBlank() ? null : dto.getCity().trim());
         post.setStatus(1);
         post.setIsTop(0);
         post.setLikeCount(0);
@@ -277,16 +309,13 @@ public class PostServiceImpl implements PostService {
         LocalDateTime now = LocalDateTime.now();
         post.setCreatedAt(now);
         post.setLastCommentTime(now);
-        // 可选坐标：写入 GEO 同城（发帖带经纬度时 GEOADD）
-        if (dto.getX() != null && dto.getY() != null) {
-            post.setLongitude(dto.getX());
-            post.setLatitude(dto.getY());
-            stringRedisTemplate.opsForGeo().add(RedisKeyConstants.GEO_POST,
-                    new Point(dto.getX(), dto.getY()), String.valueOf(post.getId()));
-        }
+        // 说明：原先此处是「发帖带经纬度 → GEOADD 写入 dbd:geo:post」。
+        // GEO 同城已封存（缺少地图 SDK，手输经纬度体验差且无法校验），故不再写 GEO 索引。
+        // 恢复方式：给 PostDTO 加回 x/y 字段并在此重写 GEOADD，其余代码无需改动。
         postMapper.insert(post);
-        // 发帖后删首页列表缓存，下次请求重新查库（简单一致性，生产可升级延迟双删）
+        // 发帖后删首页列表缓存；新帖可能带来新城市，城市列表缓存一并失效
         deleteHomeListCache();
+        deleteCitiesCache();
         // Feed 写扩散：新帖推入关注该作者/该吧的粉丝时间线
         feedService.pushNewPost(post.getId(), post.getUserId(), post.getBarId(),
                 now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
@@ -430,6 +459,13 @@ public class PostServiceImpl implements PostService {
         // 重建互斥锁一并清理：否则隐藏/删除瞬间若残留锁，下次详情重建会被跳过
         stringRedisTemplate.delete(RedisKeyConstants.POST_CACHE + postId + ":lock");
         deleteHomeListCache();
+        // 隐藏/删除会改变各城市的帖子数，城市列表缓存同步失效
+        deleteCitiesCache();
+    }
+
+    /** 城市列表缓存失效（帖子新增/隐藏/删除都可能改变城市集合或各城市帖子数） */
+    private void deleteCitiesCache() {
+        stringRedisTemplate.delete(RedisKeyConstants.POST_CITIES);
     }
 
     /* ==================== 工具 ==================== */

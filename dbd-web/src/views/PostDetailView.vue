@@ -111,6 +111,10 @@ onMounted(() => {
               <span class="user" @click="$router.push(`/user/${post.author?.id}`)">{{ post.author?.nickname }}</span>
               ·
               <span class="bar" @click="$router.push(`/bar/${post.barId}`)">{{ post.barName }}</span>
+              <template v-if="post.city">
+                ·
+                <span class="city" @click="$router.push('/city')">🏙 {{ post.city }}</span>
+              </template>
               · {{ post.createdAt }}
               · 浏览 {{ post.viewCount }} · UV {{ post.uvCount }}
             </div>
@@ -191,6 +195,8 @@ onMounted(() => {
 .sub .user { color: #4e6ef2; cursor: pointer; }
 .sub .bar { cursor: pointer; }
 .sub .bar:hover { color: #4e6ef2; }
+.sub .city { cursor: pointer; }
+.sub .city:hover { color: #4e6ef2; }
 .content { font-size: 15px; line-height: 1.8; white-space: pre-wrap; word-break: break-word; }
 .images { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 .images img { max-width: 200px; max-height: 200px; border-radius: 6px; }

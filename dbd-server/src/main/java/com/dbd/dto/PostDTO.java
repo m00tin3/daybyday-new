@@ -27,9 +27,13 @@ public class PostDTO {
     /** 图片URL列表（可空） */
     private List<String> images;
 
-    /** 经度（可选，带坐标时写入 GEO 同城） */
-    private Double x;
-
-    /** 纬度（可选，带坐标时写入 GEO 同城） */
-    private Double y;
+    /**
+     * 城市（可选）：发帖时手动填写，用于"按城市浏览"。
+     *
+     * <p>原先这里是可选的经纬度（GEO 同城）。因缺少地图 SDK 无法把用户输入的
+     * 地址转换成坐标，要求手输经纬度体验极差且无法校验，故改为城市字段；
+     * GEO 相关代码保留但功能已封存。</p>
+     */
+    @Size(max = 32, message = "城市名最长 32 字符")
+    private String city;
 }

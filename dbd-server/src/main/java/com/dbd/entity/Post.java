@@ -58,10 +58,19 @@ public class Post {
     /** 图片URL列表（JSON数组字符串） */
     private String images;
 
-    /** 经度（同城 GEO，可空） */
+    /** 城市（发帖时手动填写，用于"按城市浏览"） */
+    private String city;
+
+    /**
+     * 经度 / 纬度（GEO 同城**功能已封存**，字段保留）。
+     *
+     * <p>封存原因：GEO 需要地图 SDK 把地址转成经纬度，否则只能要求用户手输坐标，
+     * 体验差且无法校验。现改为发帖时填写 {@link #city}；
+     * 将来接入地图 SDK 后，重新在这两列写入坐标并恢复 GEOADD 即可。</p>
+     */
     private Double longitude;
 
-    /** 纬度（同城 GEO，可空） */
+    /** 纬度（GEO 同城功能已封存，见 {@link #longitude}） */
     private Double latitude;
 
     /** 状态 1正常 0删除 2精华 3隐藏 */

@@ -94,7 +94,8 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public PageResult<PostVO> posts(Long id, Integer page, Integer size) {
-        return postService.page(null, id, null, page, size);
+        // 参数依次为 barId / userId / city / keyword
+        return postService.page(null, id, null, null, page, size);
     }
 
     /* ==================== 我的收藏 ==================== */

@@ -13,6 +13,8 @@ public class PostRow {
     private Long userId;
     private String title;
     private String content;
+    /** 城市（按城市浏览用） */
+    private String city;
     private Integer isTop;
     private Integer status;
     private Integer likeCount;

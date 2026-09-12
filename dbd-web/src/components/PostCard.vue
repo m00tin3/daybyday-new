@@ -26,6 +26,7 @@ function digest(content) {
       <div class="post-meta">
         <span class="user" @click.stop="$router.push(`/user/${post.author?.id}`)">{{ post.author?.nickname }}</span>
         <span v-if="post.barName" class="bar" @click.stop="$router.push(`/bar/${post.barId}`)">@{{ post.barName }}</span>
+        <span v-if="post.city" class="city" @click.stop="$router.push('/city')">🏙 {{ post.city }}</span>
         · {{ post.createdAt }} ·
         回复 <span class="post-count">{{ post.commentCount }}</span>
         <span class="post-count" style="margin-left: 10px">👍 {{ post.likeCount }}</span>
@@ -48,5 +49,7 @@ function digest(content) {
 .post-meta .user:hover { text-decoration: underline; }
 .post-meta .bar { color: #999; margin-left: 8px; }
 .post-meta .bar:hover { color: #4e6ef2; }
+.post-meta .city { color: #999; margin-left: 8px; }
+.post-meta .city:hover { color: #4e6ef2; }
 .post-count { color: #4e6ef2; font-weight: bold; font-size: 13px; }
 </style>

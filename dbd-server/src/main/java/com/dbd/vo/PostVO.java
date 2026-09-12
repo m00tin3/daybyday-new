@@ -30,6 +30,10 @@ public class PostVO {
     private String title;
     private String content;
     private List<String> images;
+
+    /** 城市（发帖时手动填写，用于按城市浏览） */
+    private String city;
+
     private Boolean isTop;
     private Integer status;
 
@@ -43,7 +47,11 @@ public class PostVO {
     private Boolean isLiked;
     private Boolean isFavorited;
     private String createdAt;
-    /** 距查询坐标的距离（米，仅同城 GEO 接口返回） */
+
+    /**
+     * 距查询坐标的距离（米）。
+     * <p>仅 GEO 同城接口返回；该功能已封存，此处保留字段以便恢复。</p>
+     */
     private Double distance;
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -61,6 +69,7 @@ public class PostVO {
         vo.setAuthor(author);
         vo.setTitle(row.getTitle());
         vo.setContent(row.getContent());
+        vo.setCity(row.getCity());
         vo.setIsTop(row.getIsTop() != null && row.getIsTop() == 1);
         vo.setStatus(row.getStatus());
         vo.setLikeCount(row.getLikeCount() == null ? 0L : row.getLikeCount().longValue());
@@ -81,6 +90,7 @@ public class PostVO {
         vo.setTitle(post.getTitle());
         vo.setContent(post.getContent());
         vo.setImages(parseImages(post.getImages()));
+        vo.setCity(post.getCity());
         vo.setIsTop(post.getIsTop() != null && post.getIsTop() == 1);
         vo.setStatus(post.getStatus());
         vo.setLikeCount(post.getLikeCount() == null ? 0L : post.getLikeCount().longValue());

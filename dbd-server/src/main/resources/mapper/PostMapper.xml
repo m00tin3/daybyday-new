@@ -5,7 +5,7 @@
 
     <!-- 帖子列表：联表补全吧名/作者，置顶优先 → 最后回复时间倒序 -->
     <select id="selectPostPage" resultType="com.dbd.vo.PostRow">
-        SELECT p.id, p.bar_id, p.user_id, p.title, p.content, p.is_top, p.status,
+        SELECT p.id, p.bar_id, p.user_id, p.title, p.content, p.city, p.is_top, p.status,
                p.like_count, p.favorite_count, p.comment_count, p.view_count,
                p.created_at, p.last_comment_time,
                b.name AS bar_name,
@@ -22,6 +22,9 @@
         <if test="userId != null">
             AND p.user_id = #{userId}
         </if>
+        <if test="city != null and city != ''">
+            AND p.city = #{city}
+        </if>
         <if test="keyword != null and keyword != ''">
             AND (p.title LIKE CONCAT('%', #{keyword}, '%') OR p.content LIKE CONCAT('%', #{keyword}, '%'))
         </if>
@@ -34,7 +37,7 @@
       因此 status=3（隐藏）与 status=0（已删除）天然不会出现在前台。
     -->
     <select id="selectAdminPostPage" resultType="com.dbd.vo.PostRow">
-        SELECT p.id, p.bar_id, p.user_id, p.title, p.content, p.is_top, p.status,
+        SELECT p.id, p.bar_id, p.user_id, p.title, p.content, p.city, p.is_top, p.status,
                p.like_count, p.favorite_count, p.comment_count, p.view_count,
                p.created_at, p.last_comment_time,
                b.name AS bar_name,
@@ -51,6 +54,24 @@
             </if>
         </where>
         ORDER BY p.created_at DESC
+    </select>
+
+    <!--
+      按城市浏览：统计"有可见帖子"的城市及数量（数量降序）。
+      口径与前台列表保持一致：帖子 status IN (1,2) 且所属吧 status = 1，
+      否则会出现"城市列表里有的城市，点进去却是空的"。
+    -->
+    <select id="selectCityStats" resultType="com.dbd.vo.CityStatVO">
+        SELECT p.city AS city, COUNT(*) AS postCount
+        FROM post p
+        JOIN bar b ON p.bar_id = b.id
+        WHERE p.status IN (1, 2)
+          AND b.status = 1
+          AND p.city IS NOT NULL
+          AND p.city &lt;&gt; ''
+        GROUP BY p.city
+        ORDER BY postCount DESC, p.city ASC
+        LIMIT 50
     </select>
 
 </mapper>
