@@ -50,6 +50,11 @@ nginx ──(静态: /)──► Vue3 构建产物 (dist)
 ### 方式一：Docker 一键启动（推荐）
 
 ```bash
+# 1. 配置密码（必做，未设置 compose 会拒绝启动）
+cp .env.example .env
+vi .env          # 修改 MYSQL_PASSWORD 与 REDIS_PASSWORD
+
+# 2. 启动
 docker compose up -d --build
 ```
 
@@ -58,10 +63,14 @@ docker compose up -d --build
 | 入口 | 地址 |
 |---|---|
 | 前端页面 | http://localhost |
+| 前端备用入口 | http://localhost:8090 |
 | 接口文档（Swagger UI） | http://localhost/swagger-ui.html |
 | 后端健康检查 | http://localhost/api/health |
 
-> 本机已有 MySQL/Redis 占用端口时：`MYSQL_PORT=3307 REDIS_PORT=6380 WEB_PORT=8090 docker compose up -d --build`
+> - 端口、密码等全部配置集中在 `.env`（模板见 `.env.example`），无需改 compose 文件
+> - 本机已有 MySQL/Redis 占用端口时，在 `.env` 中改 `MYSQL_PORT` / `REDIS_PORT` 即可
+> - **国内服务器部署前请先看 [DEPLOY.md §2](DEPLOY.md)**：镜像源、swap、备案等坑会直接导致失败
+> - 安全设计：MySQL/Redis/后端端口只绑定 `127.0.0.1`，仅前端 nginx（80/8090）对外提供服务
 
 ### 方式二：本地开发
 

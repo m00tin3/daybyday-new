@@ -2,12 +2,15 @@
 # Day-BY-Day 后端配置
 # 数据库/Redis 连接支持环境变量覆盖：
 #   MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD
-#   REDIS_HOST / REDIS_PORT
-# 本地默认 localhost + 1234；Docker 由 docker-compose 注入容器名
+#   REDIS_HOST / REDIS_PORT / REDIS_PASSWORD
+# 本地默认 localhost；Docker 部署由 docker-compose 注入容器名
+#
+# 生产开关（由 .env 注入，无需改动代码）：
+#   SQL_LOG_IMPL / LOG_LEVEL / SMS_MOCK
 # ============================================================
 
 server:
-  # 后端端口：nginx 反代 /api → 127.0.0.1:8080
+  # 后端端口：nginx 反代 /api → backend:8080（容器内）
   port: 8080
 
 spring:
@@ -24,6 +27,8 @@ spring:
       # Redis（会话/缓存/计数/秒杀/GEO/Feed 均由 Redis 承载）
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # 生产启用密码（.env 注入）；本地开发默认空 = 不鉴权
+      password: ${REDIS_PASSWORD:}
       lettuce:
         pool:
           max-active: 16
@@ -36,8 +41,8 @@ mybatis-plus:
   configuration:
     # 下划线字段名自动映射驼峰属性（user_id -> userId）
     map-underscore-to-camel-case: true
-    # 开发期打印 SQL，便于调试（上线可去掉）
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    # SQL 打印：开发期 StdOutImpl 便于调试；生产由 .env 切为 NoLoggingImpl
+    log-impl: ${SQL_LOG_IMPL:org.apache.ibatis.logging.stdout.StdOutImpl}
   global-config:
     db-config:
       # 主键由 Redis 全局 ID 生成器产生，禁用 MyBatis-Plus 默认雪花算法
@@ -54,11 +59,12 @@ springdoc:
 
 logging:
   level:
-    com.dbd: debug
+    # 生产由 .env 设为 info，避免 debug 日志刷满磁盘
+    com.dbd: ${LOG_LEVEL:debug}
 
 # ============ 应用自定义配置 ============
 app:
   sms:
     # 演示模式：验证码固定 123456，不接真实短信通道（联调/面试演示直接输入）
     # 生产模式改为 false，并在 AuthServiceImpl 中接入短信服务商 API
-    mock: true
+    mock: ${SMS_MOCK:true}

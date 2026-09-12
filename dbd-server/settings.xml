@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Maven 镜像配置：国内服务器使用阿里云公共仓库加速依赖下载
+  实测 maven.aliyun.com 连接耗时 0.009s，远优于 Maven Central 的 0.20s
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+  <mirrors>
+    <mirror>
+      <id>aliyun-public</id>
+      <name>Aliyun Public Repository</name>
+      <url>https://maven.aliyun.com/repository/public</url>
+      <!-- 仅镜像 central，避免破坏需要特定仓库地址的依赖 -->
+      <mirrorOf>central</mirrorOf>
+    </mirror>
+  </mirrors>
+</settings>

@@ -23,7 +23,11 @@
     <!-- MyBatis-Plus：Spring Boot 3 专用 starter -->
     <mybatis-plus.version>3.5.9</mybatis-plus.version>
     <!-- SpringDoc：Swagger UI 接口文档 -->
-    <springdoc.version>2.6.0</springdoc.version>
+    <!-- 注意：2.6.0 与 Spring Boot 3.5 不兼容 —— 它调用的 ControllerAdviceBean(Object)
+         构造函数在 Spring Framework 6.2（Spring Boot 3.5 自带）中已被移除，会导致
+         /v3/api-docs 抛 NoSuchMethodError、Swagger 文档整体不可用。
+         2.9.1 是官方标注支持 Spring Boot 3.x 的最终版本（3.x 系列仅支持 Spring Boot 4）。 -->
+    <springdoc.version>2.9.1</springdoc.version>
   </properties>
 
   <dependencies>

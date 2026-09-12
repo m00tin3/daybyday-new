@@ -7,6 +7,12 @@
 -- Docker：mysql 容器启动时自动执行（docker-entrypoint-initdb.d 挂载）
 -- ============================================================
 
+-- 强制会话字符集为 utf8mb4。
+-- 必须放在所有含中文的语句之前：MySQL 容器内客户端的 character_set_client
+-- 默认为 latin1，若不设置，本文件中的 UTF-8 中文会被按 Latin-1 解读后再转存，
+-- 造成"二次编码"乱码（例如 猫 被存成 C3A7C592C2AB 而非 E78CAB）。
+SET NAMES utf8mb4;
+
 CREATE DATABASE IF NOT EXISTS dbd DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE dbd;
 

@@ -8,6 +8,16 @@ target/
 *.log
 run.err
 
+# ===== 部署密钥（含生产密码，严禁入库） =====
+.env
+.env.*
+!.env.example
+
+# ===== 部署用 SSH 私钥（严禁入库） =====
+.deploy/
+*.pem
+dbd_deploy*
+
 # ===== IDE / 系统 =====
 .idea/
 .vscode/
