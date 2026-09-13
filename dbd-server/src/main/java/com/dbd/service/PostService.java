@@ -50,6 +50,15 @@ public interface PostService {
     void evictPostCache(Long postId);
 
     /**
+     * 只清除首页列表缓存（各分页）。
+     *
+     * <p>列表缓存里存的是整份 PostVO，**包含作者的徽章**。因此除了发帖/删帖，
+     * 用户抢到限量徽章时也必须让列表缓存失效——否则抢完回到首页，
+     * 昵称旁的角标最长 60 秒（列表 TTL）后才出现。</p>
+     */
+    void evictHomeListCache();
+
+    /**
      * 有帖子的城市列表（含数量，降序），用于"按城市浏览"页。
      * <p>结果带 Redis 缓存；发帖或管理端变更后会失效重建。</p>
      */

@@ -311,8 +311,12 @@ public class AdminServiceImpl implements AdminService {
         // 一人一单标记按用户分散：dbd:seckill:order:{activityId}:{userId}
         removeKeysByPattern(RedisKeyConstants.SECKILL_ORDER + activityId + ":*");
         activityMapper.deleteById(activityId);
-        // 徽章随活动一起消失，缓存不清的话最长 10 分钟内作者昵称旁还挂着它
+        // 徽章随活动一起消失：用户维度缓存与首页列表缓存（含作者徽章）都要失效，
+        // 否则最长 10 分钟内作者昵称旁还挂着它
         awardedUsers.forEach(badgeService::evict);
+        if (!awardedUsers.isEmpty()) {
+            evictHomeListCache();
+        }
     }
 
     /**

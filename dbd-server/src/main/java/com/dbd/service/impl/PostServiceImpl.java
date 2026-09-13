@@ -479,6 +479,11 @@ public class PostServiceImpl implements PostService {
         deleteCitiesCache();
     }
 
+    @Override
+    public void evictHomeListCache() {
+        deleteHomeListCache();
+    }
+
     /** 城市列表缓存失效（帖子新增/隐藏/删除都可能改变城市集合或各城市帖子数） */
     private void deleteCitiesCache() {
         stringRedisTemplate.delete(RedisKeyConstants.POST_CITIES);

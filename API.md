@@ -482,6 +482,7 @@
 | 批量查询 | `selectBadgesByUserIds` 一次 `IN` 查完一页帖子的所有作者，杜绝 N+1 |
 | 缓存 | `dbd:badge:user:{userId}` → BadgeVO 数组 JSON，TTL 10 分钟，**空数组也缓存**（多数用户无徽章，不缓存空值会次次击穿 DB） |
 | 一致性 | Cache-Aside：领取成功落库后删除 key；删除活动时对全部领取人一并失效 |
+| 首页列表 | `dbd:post:list:home:{page}` 存的是整份 PostVO（**含作者徽章**），发徽章后必须一并失效，否则抢完回首页要等 60 秒列表 TTL 才看到角标 |
 | 详情页 | 徽章在 `fillRequestState`（缓存命中/未命中都会走）里覆盖，**不写进帖子详情缓存**，否则刚抢到也要等 10 分钟缓存过期才可见 |
 
 ---

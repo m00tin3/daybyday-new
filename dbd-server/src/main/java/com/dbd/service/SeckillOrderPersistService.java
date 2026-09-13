@@ -21,13 +21,20 @@ public class SeckillOrderPersistService {
     private final ActivityOrderMapper activityOrderMapper;
     private final StringRedisTemplate stringRedisTemplate;
     private final BadgeService badgeService;
+    /**
+     * 首页列表缓存里存的是整份 PostVO（含作者徽章），发徽章后必须一并失效，
+     * 否则抢完回首页，昵称旁的角标要等列表 TTL（60 秒）才出现。
+     */
+    private final PostService postService;
 
     public SeckillOrderPersistService(ActivityOrderMapper activityOrderMapper,
                                       StringRedisTemplate stringRedisTemplate,
-                                      BadgeService badgeService) {
+                                      BadgeService badgeService,
+                                      PostService postService) {
         this.activityOrderMapper = activityOrderMapper;
         this.stringRedisTemplate = stringRedisTemplate;
         this.badgeService = badgeService;
+        this.postService = postService;
     }
 
     /**
@@ -37,9 +44,10 @@ public class SeckillOrderPersistService {
     public void persist(ActivityOrder order, Long activityId, Long userId) {
         try {
             activityOrderMapper.insert(order);
-            // 必须在 insert 成功之后再失效徽章缓存：提前删的话，紧接着的读请求
+            // 必须在 insert 成功之后再失效缓存：提前删的话，紧接着的读请求
             // 会把"还没有徽章"的空结果重新缓存进去，用户要等 TTL 过期才看得到
             badgeService.evict(userId);
+            postService.evictHomeListCache();
             log.info("秒杀订单落库成功 orderId={}, activityId={}, userId={}",
                     order.getId(), activityId, userId);
         } catch (Exception e) {
