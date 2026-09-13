@@ -144,6 +144,7 @@
 | replyToNickname | String | 被回复者昵称，供前端渲染「回复 @某某」；目标可能不在预览里，故由后端给 |
 | replies | CommentVO[] | **仅顶层楼层有**：子回复的**第 1 页**（最多 10 条） |
 | replyCount | Long | 子回复总数（仅顶层楼层有）；大于 10 时前端在该层内分页（见 §3.2.6.1） |
+| deleted | Boolean | **仅顶层楼层**：`true` = 该楼层已被作者删除（见 §3.2.9）。此时只有 `id`/`floorNo`/`deleted`/`replies`/`replyCount` 有值，其余字段全为 `null` |
 | likeCount | Long | 点赞数 |
 | createdAt | String | 时间 |
 
@@ -289,7 +290,7 @@
 - 成功：`{ "code": 1, "data": { "list": [ CommentVO 按 floorNo 升序 ], "total": Long, "page": 1, "size": 10 } }`
 - **楼中楼（固定 2 层）**：列表只返回顶层楼层（`parentId = null`），每个顶层楼层的 `replies` 挂**第 1 页**子回复（`REPLY_PAGE_SIZE = 10` 条）、`replyCount` 给总数
 - 某一层的子回复若超过 10 条，前端在**该层内翻页**（仿贴吧的层内翻页），第 2 页起走 §3.2.6.1
-- `total` **不含**子回复（它是"楼层数"而非"回复数"）；帖子卡片上的「回复 N」用 `post.commentCount`，那个**含**子回复
+- `total` = **楼层数 + 被作者删除的占位数**，**不含**子回复（贴吧同款：删掉的楼层占着位置，页码不跳动，所以一页 10 条里可能有几条是占位）。帖子卡片上的「回复 N」用 `post.commentCount`，那个**含**子回复
 - 批量组装：本页所有顶层楼层的子回复用**一次 `IN` 查询**取回后按 `parentId` 分组，不做逐层查询；作者与被回复者昵称也**一次批量查**
 - 子回复的 `floor_no` 为 0（哨兵，不占楼层号）——否则顶层楼层号会出现 `[1,3]` 空档
 
@@ -321,7 +322,33 @@
 - `floorNo` 对楼中楼恒为 **0**；前端据此区分「你是第 N 楼」与「回复成功」
 - Redis：**只有顶层楼层**才 `INCR dbd:post:floor:{postId}`（同 `comment.floor_no`）；防重复提交 `SETNX dbd:repeat:comment:{userId}`（3 秒，先校验后上锁）→ 3002；帖子 `commentCount` +1；更新 `lastCommentTime`；同步落库；删除详情/列表缓存
 - `replyToCommentId` 决定 `comment.reply_to_user_id`（被回复者），进而决定**回复提醒发给谁**
-- 失败：帖子不存在 → 2002；父楼层不存在 / 不属于本帖 → 2002；父楼层本身是子回复 → **2001 只支持两级回复**；`replyToCommentId` 不存在或不属于本帖 → 2002
+- 失败：帖子不存在 → 2002；父楼层不存在 / 不属于本帖 → 2002；父楼层本身是子回复 → **2001 只支持两级回复**；**父楼层或 `replyToCommentId` 指向的内容已被作者删除 → 2002**；`replyToCommentId` 不属于本帖 → 2002
+
+#### 3.2.8 删除自己的帖子 🔒
+`DELETE /api/post/{id}`
+- 成功：`{ "code": 1, "msg": "已删除" }`
+- **软删除**：`post.status → 0`。前台全链路立刻不可见（列表 SQL `status IN (1,2)`、详情 `isVisible`、Feed/热榜/收藏同样过滤），但**数据仍在库里**，管理员可上服务器改 `status` 恢复（见《服务器运维手册》）
+- **只改帖子自己的状态，不逐条改该帖楼层的状态** —— 否则回复者「TA 的回复」列表里的记录会一并消失（那个列表按 `comment.status = 1` 查，而需求要求"帖子被删后回复者的记录仍在"）。帖子不可见后 `requirePost` 抛 2002，整栋楼在效果上同样到不了
+- 缓存：`evictPostCache`（详情 + 首页列表 5 页 + 城市）
+- 幂等：已删除的帖子再次调用直接成功
+- 失败：帖子不存在 → 2002；**非本人 → 2003**；未登录 → HTTP 401
+
+#### 3.2.9 删除自己的回复 🔒
+`DELETE /api/post/{postId}/comment/{commentId}`
+- 成功：`{ "code": 1, "msg": "已删除" }`
+- **软删除**：`comment.status → 0`。楼层列表、层内翻页、子回复查询都已带 `status = 1`，自动不再出现
+- **删顶层楼层时，其楼中楼保留可见**（需求明确要求）—— 所以帖子回复数**只减 1**（只减被删的这条），用原子自减 `GREATEST(comment_count - 1, 0)` 防负数
+- 缓存：`deleteCache(postId)` + `deleteHomeListCache()`（详情与首页缓存里存的都是整份 PostVO，含 `commentCount`）
+- 幂等：已删除的回复再次调用直接成功
+- 失败：帖子不存在 / 不可见 → 2002；回复不存在或不属于该帖 → 2002；**非本人 → 2003**；未登录 → HTTP 401
+
+> **占位与脱敏（配合 §3.2.6 阅读）**：删掉的是**顶层楼层**时，列表里该位置会返回一条
+> `deleted = true` 的**占位**（保证它的子回复有父节点可挂、也让楼层号不跳号）。占位
+> **只有** `id` / `floorNo` / `deleted` / `replies` / `replyCount`，其余字段（`content` / `author` /
+> `images` / `createdAt` / `likeCount` / `replyToNickname`）一律为 `null` —— 该楼层的内容与作者
+> 不对外泄露。子回复的 `replyToNickname` 若本应指向被删楼层的作者，也会被清空。
+>
+> 删掉的是**子回复**时没有占位，直接消失（它没有下级，也不占楼层号）。
 
 ---
 
@@ -365,7 +392,9 @@
 
 #### 3.4.1 用户主页信息
 `GET /api/user/{id}`
-- 成功：`{ "code": 1, "data": { "user": UserVO, "postCount": Long, "followerCount": Long, "followingCount": Long, "isFollowed": Boolean } }`
+- 成功：`{ "code": 1, "data": { "user": UserVO, "postCount": Long, "replyCount": Long, "followerCount": Long, "followingCount": Long, "isFollowed": Boolean } }`
+- `postCount` 口径：`post.status IN (1,2)`（作者自己删掉的帖子不计入）
+- `replyCount` 口径：**只按 `comment.status = 1`，不管所属帖子是否已被删除** —— 必须与 §3.4.7 的列表条数一致（那个列表刻意保留"帖子已删"的记录）
 - Redis：粉丝数 `dbd:user:fan:{id}`（String 计数，无值 0）；关注数（followingCount）直查 follow 表；当前实现未做用户缓存
 
 #### 3.4.2 用户帖子
@@ -416,6 +445,23 @@
 - 失败：2001 —— 昵称为空/超长、签名超长、账号格式错误、**账号已被占用**
 - 安全：userId 一律取自登录态 `UserContext`，不接受请求体传入，因此只能改本人资料
 - 唯一性：先查冲突返回友好提示，再由 `user.uk_phone` 唯一索引兜底防并发
+
+#### 3.4.7 某人的回复列表
+`GET /api/user/{id}/replies`
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| page / size | Integer | 否 | 默认 1 / 20（最大 50） |
+
+- 成功：`{ "code": 1, "data": { "list": [ UserReplyVO ], "total": Long, "page": 1, "size": 20 } }`
+- **所有人可见**（个人主页的「TA 的回复」Tab），不需要登录
+- UserReplyVO 字段：`id` / `postId` / `content` / `floorNo` / `nested`（true=楼中楼）/ `createdAt` / `postTitle` / `postDeleted`
+- 只返回 `comment.status = 1` 的（作者自己删掉的回复不再出现）
+- ⚠️ **所属帖子被删除后，这条记录仍会返回**（这是刻意的）：SQL 用 `LEFT JOIN post` 且**不带**帖子状态过滤，同时带出 `p.status AS post_status`。前端据 `postDeleted` 决定"点击是跳转还是弹提示"——
+  - 只看 `postTitle` 是否为空判断会**失败**：帖子被**软删除**后行还在，标题照样查得到
+  - 因此实现时**绝不能**在这个查询里"顺手"加上 `AND p.status IN (1,2)`
+- `postDeleted = !Post.isVisible(postStatus)`；帖子被管理员**物理删除**时 `postStatus` 为 null，同样算已删除
+- 排序：`created_at DESC, id DESC`
+- 失败：用户不存在由 `profile` 那条路径覆盖（本接口对不存在的 userId 返回空列表）
 
 ---
 
@@ -811,6 +857,8 @@
 | `post.getComments` | /api/post/{id}/comments | GET | -（每层带第 1 页子回复 + 子回复总数） |
 | `post.getFloorReplies` | /api/post/{id}/comment/{floorId}/replies | GET | -（楼中楼层内翻页） |
 | `post.addComment` | /api/post/{id}/comment | POST | 🔒 |
+| `post.deleteOwnPost` | /api/post/{id} | DELETE | 🔒（软删除，仅本人） |
+| `post.deleteOwnComment` | /api/post/{id}/comment/{commentId} | DELETE | 🔒（软删除，仅本人） |
 | `bar.getBarInfo` | /api/bar/{id} | GET | - |
 | `bar.getBarPosts` | /api/bar/{id}/posts | GET | - |
 | `bar.signIn` | /api/bar/{id}/sign | POST | 🔒 |
@@ -818,6 +866,7 @@
 | `bar.getBarRank` | /api/bar/rank | GET | - |
 | `user.getUserProfile` | /api/user/{id} | GET | - |
 | `user.getUserPosts` | /api/user/{id}/posts | GET | - |
+| `user.getUserReplies` | /api/user/{id}/replies | GET | -（TA 的回复，帖子已删的记录仍在） |
 | `user.getUserFavorites` | /api/user/favorites | GET | 🔒 |
 | `user.getSignCalendar` | /api/user/{id}/sign | GET | - |
 | `user.followUser` | /api/user/{id}/follow | POST | 🔒 |
