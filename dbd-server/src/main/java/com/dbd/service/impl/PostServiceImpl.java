@@ -1,6 +1,7 @@
 package com.dbd.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dbd.common.BusinessException;
@@ -665,13 +666,15 @@ public class PostServiceImpl implements PostService {
         comment.setStatus(1);
         commentMapper.insert(comment);
 
-        // 帖子楼层数 +1、最后回复时间更新（DB），并删详情/首页缓存保持新鲜。
-        // postRow 是回帖前那次 requirePost 的快照，它的 commentCount 正好就是"旧计数"
-        Post update = new Post();
-        update.setId(postId);
-        update.setCommentCount((int) (postRow.getCommentCount() + 1));
-        update.setLastCommentTime(LocalDateTime.now());
-        postMapper.updateById(update);
+        // 帖子回复数 +1、最后回复时间更新（DB），并删详情/首页缓存保持新鲜。
+        //
+        // comment_count 必须用**原子自增**，不能"读出来 +1 再写回"：
+        // 两个人同时回帖时会丢更新（都读到 5、都写 6，两条回复只涨 1）。
+        // 上面那个 SETNX 防重复锁是**按用户**的，挡不住不同用户并发。
+        postMapper.update(null, new LambdaUpdateWrapper<Post>()
+                .eq(Post::getId, postId)
+                .setSql("comment_count = comment_count + 1")
+                .set(Post::getLastCommentTime, LocalDateTime.now()));
         deleteCache(postId);
         deleteHomeListCache();
 
