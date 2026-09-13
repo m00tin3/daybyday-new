@@ -100,7 +100,7 @@
 | description | String | 简介（可空） |
 | cover | String | 封面 URL（可空） |
 | memberCount | Long | 关注人数（Redis 计数） |
-| postCount | Long | 帖子数 |
+| postCount | Long | 帖子数（DB 列 `bar.post_count`，**每 5 分钟按实际可见帖子数重算** —— 该列没有写路径，只能定期自愈，故最多滞后 5 分钟） |
 | status | Integer | 状态：1 正常 / 0 已隐藏（仅管理后台返回并筛选，前台只返回正常吧） |
 | isFollowed | Boolean | 当前登录用户是否已关注（未登录 false） |
 | signedToday | Boolean | 今天是否已签到（未登录 false） |
@@ -330,7 +330,7 @@
 #### 3.3.1 吧信息
 `GET /api/bar/{id}`
 - 成功：`{ "code": 1, "data": { BarVO } }`
-- Redis：`dbd:bar:cache:{id}` 缓存三件套；memberCount/postCount 取 Redis 计数
+- Redis：`dbd:bar:cache:{id}` 缓存三件套；`memberCount` 取 Redis 计数，`postCount` 取 DB 列（每 5 分钟重算，见 §2.2）
 - 失败：不存在 → 2002
 
 #### 3.3.2 吧内帖子

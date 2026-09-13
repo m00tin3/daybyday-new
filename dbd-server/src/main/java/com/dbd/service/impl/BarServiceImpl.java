@@ -239,17 +239,24 @@ public class BarServiceImpl implements BarService {
         return result;
     }
 
-    /** 定时重算热吧榜：每 5 分钟从 DB 全量重建（score=member_count） */
+    /**
+     * 定时重算热吧榜：每 5 分钟从 DB 全量重建（score=member_count）。
+     *
+     * <p>顺带自愈 {@code bar.post_count}（见 {@link BarMapper#refreshPostCounts()}）：
+     * 这个字段没有任何写路径，只能靠定期按实际帖子数纠正。放在同一个 5 分钟任务里，
+     * 不额外增加定时器。</p>
+     */
     @Scheduled(cron = "0 */5 * * * ?")
     @Override
     public void rebuildRank() {
+        int barsFixed = barMapper.refreshPostCounts();
         List<Bar> bars = barMapper.selectList(new LambdaQueryWrapper<Bar>()
                 .eq(Bar::getStatus, 1).orderByDesc(Bar::getMemberCount));
         for (Bar bar : bars) {
             stringRedisTemplate.opsForZSet()
                     .add(RedisKeyConstants.RANK_HOT_BAR, String.valueOf(bar.getId()), bar.getMemberCount());
         }
-        log.info("热吧榜已重算，共 {} 个吧", bars.size());
+        log.info("热吧榜已重算，共 {} 个吧；post_count 已按实际帖子数纠正 {} 个吧", bars.size(), barsFixed);
     }
 
     /* ==================== 管理端支撑 ==================== */
