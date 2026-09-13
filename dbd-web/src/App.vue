@@ -1,13 +1,21 @@
 <script setup>
 // 全局布局：顶部导航（登录后显示用户下拉：个人资料/我的主页/发帖/管理后台/退出）+ 页面出口 router-view
-import { computed } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUserStore } from './stores/user'
+import { useNoticeStore } from './stores/notice'
 
 const route = useRoute()
 const userStore = useUserStore()
+const noticeStore = useNoticeStore()
 // 登录页隐藏顶栏（保持登录卡片干净）
 const showTopbar = computed(() => route.name !== 'login')
+
+// 未读消息红点：登录后拉一次，之后每次路由变化/登录态变化都刷一次。
+// 够用且不需要轮询 —— 通知的新增都发生在自己的操作之后，路由切换时刷新即可。
+onMounted(() => noticeStore.refresh())
+watch(() => route.fullPath, () => noticeStore.refresh())
+watch(() => userStore.token, () => noticeStore.refresh())
 </script>
 
 <template>
@@ -22,6 +30,9 @@ const showTopbar = computed(() => route.name !== 'login')
           <router-link to="/rank">排行</router-link>
           <router-link to="/city">城市</router-link>
           <router-link to="/search">搜索</router-link>
+          <router-link to="/notification">
+            消息<span v-if="noticeStore.unread" class="notice-count">{{ noticeStore.unread > 99 ? '99+' : noticeStore.unread }}</span>
+          </router-link>
         </nav>
         <div class="topbar-right">
           <template v-if="userStore.token">
@@ -65,6 +76,8 @@ body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: #f
 .logo span { color: #f40; }
 .nav-links a { color: #333; text-decoration: none; font-size: 14px; margin-right: 18px; }
 .nav-links a:hover { color: #4e6ef2; }
+/* 未读消息红点：手写一个小胶囊，跟项目整体手写样式的风格一致（全项目未用过 el-badge） */
+.nav-links .notice-count { display: inline-block; min-width: 16px; height: 16px; line-height: 16px; padding: 0 4px; margin-left: 3px; border-radius: 8px; background: #f40; color: #fff; font-size: 11px; text-align: center; vertical-align: 1px; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; }
 .user-entry { cursor: pointer; color: #4e6ef2; font-size: 14px; display: inline-flex; align-items: center; gap: 6px; }
 .admin-badge { transform: scale(0.9); }

@@ -10,6 +10,7 @@ import com.dbd.dto.NoticeCreateDTO;
 import com.dbd.dto.PostDTO;
 import com.dbd.entity.Bar;
 import com.dbd.entity.Comment;
+import com.dbd.entity.Notification;
 import com.dbd.entity.Post;
 import com.dbd.entity.PostFavorite;
 import com.dbd.entity.PostLike;
@@ -22,6 +23,7 @@ import com.dbd.mapper.PostMapper;
 import com.dbd.mapper.UserMapper;
 import com.dbd.service.BadgeService;
 import com.dbd.service.FeedService;
+import com.dbd.service.NotificationService;
 import com.dbd.service.PostCountService;
 import com.dbd.service.PostService;
 import com.dbd.utils.RedisIdWorker;
@@ -43,8 +45,11 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
@@ -75,7 +80,12 @@ public class PostServiceImpl implements PostService {
     private final BadgeService badgeService;
     /** 点赞/收藏计数回填（以 Redis 为准，DB 那两列从来没被写过） */
     private final PostCountService postCountService;
+    /** 回复/点赞提醒（与 PostServiceImpl 无循环依赖：它只依赖 NotificationMapper + RedisIdWorker） */
+    private final NotificationService notificationService;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /** 每个顶层楼层最多挂几条子回复预览，其余靠 replyCount 告知总数 */
+    private static final int REPLY_PREVIEW = 3;
 
     /** 详情缓存基础 TTL：10 分钟 + 0~5 分钟随机偏移（防雪崩） */
     private static final Duration CACHE_TTL = Duration.ofMinutes(10);
@@ -92,7 +102,7 @@ public class PostServiceImpl implements PostService {
                            UserMapper userMapper, BarMapper barMapper,
                            StringRedisTemplate stringRedisTemplate, RedisIdWorker redisIdWorker,
                            FeedService feedService, BadgeService badgeService,
-                           PostCountService postCountService) {
+                           PostCountService postCountService, NotificationService notificationService) {
         this.postMapper = postMapper;
         this.commentMapper = commentMapper;
         this.postLikeMapper = postLikeMapper;
@@ -104,6 +114,7 @@ public class PostServiceImpl implements PostService {
         this.feedService = feedService;
         this.badgeService = badgeService;
         this.postCountService = postCountService;
+        this.notificationService = notificationService;
     }
 
     /* ==================== 列表 ==================== */
@@ -402,7 +413,7 @@ public class PostServiceImpl implements PostService {
 
     @Override
     public Map<String, Object> like(Long postId) {
-        requirePost(postId);
+        Post post = requirePost(postId);
         Long userId = UserContext.get();
         return toggleMember(RedisKeyConstants.POST_LIKE, postId, userId,
                 () -> {
@@ -411,6 +422,11 @@ public class PostServiceImpl implements PostService {
                     row.setPostId(postId);
                     row.setUserId(userId);
                     postLikeMapper.insert(row);
+                    // 只在"0→1 新点赞"这一刻发提醒。取消点赞既不撤回旧通知（通知是历史记录，
+                    // 不回滚），也不产生新通知；反复赞/取消由 NotificationService 按
+                    // (接收者, 触发者, 类型, 帖子) 去重，不会刷屏。
+                    notificationService.notify(post.getUserId(),
+                            Notification.TYPE_LIKE_POST, userId, postId, null);
                 },
                 () -> postLikeMapper.delete(new LambdaQueryWrapper<PostLike>()
                         .eq(PostLike::getPostId, postId).eq(PostLike::getUserId, userId)),
@@ -470,62 +486,147 @@ public class PostServiceImpl implements PostService {
                         .eq(Comment::getStatus, 1)
                         .orderByAsc(Comment::getFloorNo));
         List<Comment> records = rows.getRecords();
-        // 批量查作者，避免逐条 N+1
-        Map<Long, User> userMap = records.isEmpty() ? Map.of()
-                : userMapper.selectBatchIds(records.stream().map(Comment::getUserId).distinct().toList())
-                        .stream().collect(java.util.stream.Collectors.toMap(User::getId, u -> u));
-        List<CommentVO> list = new ArrayList<>();
+
+        // 本页顶层楼层的子回复：一次 IN 查完并按 parentId 分组，而不是逐层查（N+1）。
+        // 说明：这里把本页所有子回复都取回来了（用于得到每组的总数），
+        // 量级 = 本页楼层数 × 每层回复数。演示规模下没问题；若日后热帖单层回复上千，
+        // 再改成"分组 COUNT + 每组 LIMIT 取前 N"两条查询。
+        Map<Long, List<Comment>> repliesByParent = records.isEmpty() ? Map.of()
+                : commentMapper.selectList(new LambdaQueryWrapper<Comment>()
+                                .in(Comment::getParentId, records.stream().map(Comment::getId).toList())
+                                .eq(Comment::getStatus, 1)
+                                .orderByAsc(Comment::getCreatedAt))
+                        .stream().collect(Collectors.groupingBy(Comment::getParentId));
+
+        // 顶层楼层作者 + 子回复作者 + 子回复的"被回复者"一次性批量查，避免逐条回表。
+        // 被回复者也要查：前端要显示「回复 @某某」，而目标那条可能不在这几条预览里，
+        // 前端无从反查昵称，只能这里顺手带上。
+        Set<Long> authorIds = new HashSet<>();
+        records.forEach(c -> authorIds.add(c.getUserId()));
+        repliesByParent.values().forEach(children -> children.forEach(c -> {
+            authorIds.add(c.getUserId());
+            if (c.getReplyToUserId() != null) {
+                authorIds.add(c.getReplyToUserId());
+            }
+        }));
+        Map<Long, User> userMap = authorIds.isEmpty() ? Map.of()
+                : userMapper.selectBatchIds(authorIds).stream()
+                        .collect(Collectors.toMap(User::getId, u -> u));
+
+        List<CommentVO> list = new ArrayList<>(records.size());
+        // 徽章要连子回复作者一起批量挂，否则楼中楼里的昵称没有角标
+        List<CommentVO> badgeTargets = new ArrayList<>();
         for (Comment c : records) {
-            list.add(CommentVO.from(c, userMap.get(c.getUserId())));
+            CommentVO vo = CommentVO.from(c, userMap.get(c.getUserId()));
+            List<Comment> children = repliesByParent.getOrDefault(c.getId(), List.of());
+            // replyCount 是总数，replies 只挂前几条（前端据此显示「共 N 条回复」）
+            vo.setReplyCount((long) children.size());
+            List<CommentVO> preview = children.stream()
+                    .limit(REPLY_PREVIEW)
+                    .map(child -> {
+                        CommentVO childVo = CommentVO.from(child, userMap.get(child.getUserId()));
+                        User repliedTo = userMap.get(child.getReplyToUserId());
+                        childVo.setReplyToNickname(repliedTo == null ? null : repliedTo.getNickname());
+                        return childVo;
+                    })
+                    .toList();
+            vo.setReplies(preview);
+            list.add(vo);
+            badgeTargets.add(vo);
+            badgeTargets.addAll(preview);
         }
-        // 楼层作者同样要挂徽章：一层楼一个作者，必须批量查（见 BadgeService.badgeNamesOf）
-        badgeService.fillCommentAuthors(list);
+        badgeService.fillCommentAuthors(badgeTargets);
         return PageResult.of(list, rows.getTotal(), page, size);
     }
 
     @Override
     public Map<String, Object> addComment(Long postId, CommentDTO dto) {
         Long userId = UserContext.get();
-        requirePost(postId);
-        if (dto.getParentId() != null && commentMapper.selectById(dto.getParentId()) == null) {
-            throw BusinessException.notFound("所回复的楼层不存在");
+        Post postRow = requirePost(postId);
+
+        // 楼中楼父楼层校验：必须存在、必须属于本帖、且自身必须是顶层。
+        // 后两条不能省：只判"存在"的话，能拿 A 帖的楼层 id 往 B 帖挂回复，
+        // 也能对一条子回复再回复（三层）——而两层结构下渲染层根本表达不了三层。
+        Comment parent = null;
+        if (dto.getParentId() != null) {
+            parent = commentMapper.selectById(dto.getParentId());
+            if (parent == null || !postId.equals(parent.getPostId())) {
+                throw BusinessException.notFound("所回复的楼层不存在");
+            }
+            if (parent.getParentId() != null) {
+                throw BusinessException.param("只支持两级回复，不能再回复楼中楼");
+            }
         }
+
         // 防重复提交：SETNX 3 秒内同一用户只能回一楼（先校验后上锁，校验失败不占锁）
         Boolean locked = stringRedisTemplate.opsForValue()
                 .setIfAbsent(RedisKeyConstants.REPEAT_COMMENT + userId, "1", RedisKeyConstants.REPEAT_COMMENT_TTL);
         if (Boolean.FALSE.equals(locked)) {
             throw BusinessException.tooFast("操作太快，请稍后再试");
         }
-        // 楼层号：Redis INCR 生成；首次回帖先与 DB 最大楼层对齐（种子数据楼层不撞号）
-        String floorKey = RedisKeyConstants.POST_FLOOR + postId;
-        Long maxFloor = commentMapper.selectMaxFloor(postId);
-        if (maxFloor != null && maxFloor > 0) {
-            stringRedisTemplate.opsForValue().setIfAbsent(floorKey, String.valueOf(maxFloor));
+
+        // 楼层号只分配给顶层楼层；楼中楼固定写 0（哨兵，永不展示）。
+        // 若子回复也 INCR，就会吃掉一个楼层号，前台顶层楼层号出现 [1,3] 这种空档。
+        int floorNo = 0;
+        if (parent == null) {
+            // 首次回帖先把 Redis 计数器与 DB 最大楼层对齐（种子数据楼层不撞号）
+            String floorKey = RedisKeyConstants.POST_FLOOR + postId;
+            Long maxFloor = commentMapper.selectMaxFloor(postId);
+            if (maxFloor != null && maxFloor > 0) {
+                stringRedisTemplate.opsForValue().setIfAbsent(floorKey, String.valueOf(maxFloor));
+            }
+            floorNo = stringRedisTemplate.opsForValue().increment(floorKey).intValue();
         }
-        Long floorNo = stringRedisTemplate.opsForValue().increment(floorKey);
+
+        // 被回复者：默认是父楼层的作者；若明确点了某条评论（可能是子回复），
+        // 就以那条评论的作者为准 —— 否则"回复楼中楼的某人"会把通知发给楼主。
+        Long replyToUserId = parent == null ? null : parent.getUserId();
+        if (dto.getReplyToCommentId() != null) {
+            Comment target = commentMapper.selectById(dto.getReplyToCommentId());
+            if (target == null || !postId.equals(target.getPostId())) {
+                throw BusinessException.notFound("所回复的评论不存在");
+            }
+            replyToUserId = target.getUserId();
+        }
+
         Comment comment = new Comment();
         comment.setId(redisIdWorker.nextId("comment"));
         comment.setPostId(postId);
         comment.setUserId(userId);
-        comment.setFloorNo(floorNo.intValue());
+        comment.setFloorNo(floorNo);
         comment.setContent(dto.getContent());
         comment.setParentId(dto.getParentId());
+        comment.setReplyToUserId(replyToUserId);
         comment.setLikeCount(0);
         comment.setStatus(1);
         commentMapper.insert(comment);
-        // 帖子楼层数 +1、最后回复时间更新（DB），并删详情/首页缓存保持新鲜
-        Post post = new Post();
-        post.setId(postId);
-        post.setCommentCount((int) (postMapper.selectById(postId).getCommentCount() + 1));
-        post.setLastCommentTime(LocalDateTime.now());
-        postMapper.updateById(post);
+
+        // 帖子楼层数 +1、最后回复时间更新（DB），并删详情/首页缓存保持新鲜。
+        // postRow 是回帖前那次 requirePost 的快照，它的 commentCount 正好就是"旧计数"
+        Post update = new Post();
+        update.setId(postId);
+        update.setCommentCount((int) (postRow.getCommentCount() + 1));
+        update.setLastCommentTime(LocalDateTime.now());
+        postMapper.updateById(update);
         deleteCache(postId);
         deleteHomeListCache();
+
+        // 回复提醒：顶层回复通知帖子作者；楼中楼通知被回复者。
+        // "自己回复自己不发"由 notify 内部统一兜住，这里不重复判断。
+        if (parent == null) {
+            notificationService.notify(postRow.getUserId(),
+                    Notification.TYPE_REPLY_POST, userId, postId, comment.getId());
+        } else {
+            notificationService.notify(replyToUserId,
+                    Notification.TYPE_REPLY_COMMENT, userId, postId, comment.getId());
+        }
 
         Map<String, Object> result = new HashMap<>();
         // 楼层 ID 同为 Redis 全局 ID，转字符串避免前端 JS 精度丢失
         result.put("id", String.valueOf(comment.getId()));
         result.put("floorNo", floorNo);
+        // 前端据此区分"盖楼成功，你是第 N 楼"与"回复成功"（楼中楼 floorNo 恒为 0）
+        result.put("parentId", dto.getParentId() == null ? null : String.valueOf(dto.getParentId()));
         return result;
     }
 
@@ -553,12 +654,14 @@ public class PostServiceImpl implements PostService {
 
     /* ==================== 工具 ==================== */
 
-    private void requirePost(Long postId) {
+    /** 校验帖子可见并**把它返回**：调用方（点赞通知、回帖计数）正好要用它的作者/旧计数，省一次查库 */
+    private Post requirePost(Long postId) {
         Post post = postMapper.selectById(postId);
         // 统一可见性判定：隐藏帖(3)对前台等同不存在（不可点赞/收藏/回帖/查楼层）
         if (post == null || !Post.isVisible(post.getStatus())) {
             throw BusinessException.notFound("帖子不存在");
         }
+        return post;
     }
 
     private boolean isMember(String setKey, Long postId, Long userId) {

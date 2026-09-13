@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.dbd.mapper.NotificationMapper">
+
+    <!--
+      通知列表：一页一次联表查询补齐展示所需字段（触发者、帖子标题、回复摘要），
+      避免逐条回表造成 N+1。
+
+      三个联表一律 LEFT JOIN，且不带任何"关联对象必须存在"的条件：
+      帖子被物理删除后其楼层会被级联清掉，但通知是历史记录，不能因此整条消失
+      （post_title 为 NULL 时前端显示「帖子已删除」）。
+
+      内容摘要在 SQL 侧截断（LEFT(content, 60)），避免把 2048 字的正文全捞回来。
+    -->
+    <select id="selectNotificationPage" resultType="com.dbd.vo.NotificationRow">
+        SELECT n.id, n.type, n.from_user_id, n.post_id, n.comment_id, n.is_read, n.created_at,
+               u.nickname AS from_nickname, u.icon AS from_icon,
+               p.title    AS post_title,
+               LEFT(c.content, 60) AS comment_snippet
+        FROM notification n
+        LEFT JOIN `user` u    ON u.id = n.from_user_id
+        LEFT JOIN post p      ON p.id = n.post_id
+        LEFT JOIN `comment` c ON c.id = n.comment_id
+        WHERE n.user_id = #{userId}
+        ORDER BY n.created_at DESC, n.id DESC
+    </select>
+
+</mapper>

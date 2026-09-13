@@ -85,16 +85,18 @@ CREATE TABLE IF NOT EXISTS `comment` (
   `id`         BIGINT       NOT NULL COMMENT '楼层ID（每帖内按 Redis 自增生成楼层号）',
   `post_id`    BIGINT       NOT NULL COMMENT '帖子ID',
   `user_id`    BIGINT       NOT NULL COMMENT '回复人ID',
-  `floor_no`   INT          NOT NULL COMMENT '楼层号（1 起，本贴内递增）',
+  `floor_no`   INT          NOT NULL COMMENT '楼层号（1 起，本贴内递增；楼中楼固定 0，不占楼层号）',
   `content`    VARCHAR(2048) NOT NULL COMMENT '内容',
   `images`     VARCHAR(1024) DEFAULT NULL COMMENT '图片URL列表（JSON数组）',
   `parent_id`  BIGINT       DEFAULT NULL COMMENT '楼中楼父楼层ID（NULL=直接回帖）',
+  `reply_to_user_id` BIGINT DEFAULT NULL COMMENT '被回复者（NULL=回复楼主层本身）',
   `like_count` INT          NOT NULL DEFAULT 0 COMMENT '点赞数（Redis 为准）',
   `status`     TINYINT      NOT NULL DEFAULT 1 COMMENT '状态 1正常 0删除',
   `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_post_floor` (`post_id`, `floor_no`),
+  KEY `idx_post_parent` (`post_id`, `parent_id`),
   KEY `idx_user_created` (`user_id`, `created_at`)
 ) ENGINE=InnoDB COMMENT='评论/楼层';
 
@@ -165,6 +167,25 @@ CREATE TABLE IF NOT EXISTS `activity_order` (
   UNIQUE KEY `uk_activity_user` (`activity_id`, `user_id`) COMMENT '一人一单约束',
   KEY `idx_user` (`user_id`)
 ) ENGINE=InnoDB COMMENT='秒杀订单/领取记录';
+
+-- ==================== 消息通知 ====================
+-- 把「回复我的帖子 / 回复我的楼层 / 赞了我的帖子」统一封装成一条消息，用 type 区分。
+-- 接收者维度查列表用 (user_id, created_at)；未读数用 (user_id, is_read) 做 COUNT。
+-- 未读数刻意走 DB COUNT(*) 而非 Redis 计数器：点赞计数刚出过
+-- "Redis 与 DB 双写不一致导致前台恒为 0"的事故，未读数是低频读取，不值得再引入双写状态。
+CREATE TABLE IF NOT EXISTS `notification` (
+  `id`           BIGINT   NOT NULL COMMENT '通知ID（Redis 全局ID）',
+  `user_id`      BIGINT   NOT NULL COMMENT '接收者',
+  `type`         TINYINT  NOT NULL COMMENT '类型 1回复我的帖子 2回复我的楼层 3赞了我的帖子',
+  `from_user_id` BIGINT   NOT NULL COMMENT '触发者',
+  `post_id`      BIGINT   NOT NULL COMMENT '相关帖子',
+  `comment_id`   BIGINT   DEFAULT NULL COMMENT '相关楼层（点赞类通知为 NULL）',
+  `is_read`      TINYINT  NOT NULL DEFAULT 0 COMMENT '0未读 1已读',
+  `created_at`   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_created` (`user_id`, `created_at`),
+  KEY `idx_user_read` (`user_id`, `is_read`)
+) ENGINE=InnoDB COMMENT='消息通知';
 
 -- ============================================================
 -- 演示数据（INSERT IGNORE：重复执行安全；ID 为小固定值，与全局 ID 生成器互不冲突）

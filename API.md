@@ -136,10 +136,14 @@
 | id | Long | 楼层ID |
 | postId | Long | 帖子ID |
 | author | UserVO | 回复人 |
-| floorNo | Integer | 楼层号（1 起，帖子内递增） |
+| floorNo | Integer | 楼层号（1 起，帖子内递增）；**楼中楼固定 0**，不占楼层号 |
 | content | String | 内容 |
 | images | String[] | 图片 URL 列表 |
-| parentId | Long | 楼中楼父楼层ID（null=直接回帖） |
+| parentId | Long | 楼中楼父楼层ID（null=直接回帖；两层结构下恒为**顶层**楼层） |
+| replyToUserId | Long | 被回复者ID（点的是哪条评论的作者）；null=回复楼主层本身 |
+| replyToNickname | String | 被回复者昵称，供前端渲染「回复 @某某」；目标可能不在预览里，故由后端给 |
+| replies | CommentVO[] | **仅顶层楼层有**：子回复预览（前 3 条） |
+| replyCount | Long | 子回复总数（仅顶层楼层有）；大于 `replies.length` 时前端显示「共 N 条回复」 |
 | likeCount | Long | 点赞数 |
 | createdAt | String | 时间 |
 
@@ -283,18 +287,24 @@
 | size | Integer | 否 | 默认 10（最大 50） |
 
 - 成功：`{ "code": 1, "data": { "list": [ CommentVO 按 floorNo 升序 ], "total": Long, "page": 1, "size": 10 } }`
-- 楼中楼：**当前版本仅返回直接楼层**（`parentId = null`）；楼中楼回复已落库（`parentId` 非空），嵌套组装（replies 前 5 条 + replyCount）待迭代实现
+- **楼中楼（固定 2 层）**：列表只返回顶层楼层（`parentId = null`），每个顶层楼层的 `replies` 挂前 3 条子回复、`replyCount` 给总数
+- `total` **不含**子回复（它是"楼层数"而非"回复数"）；帖子卡片上的「回复 N」用 `post.commentCount`，那个**含**子回复
+- 批量组装：本页所有顶层楼层的子回复用**一次 `IN` 查询**取回后按 `parentId` 分组，不做逐层查询；作者与被回复者昵称也**一次批量查**
+- 子回复的 `floor_no` 为 0（哨兵，不占楼层号）——否则顶层楼层号会出现 `[1,3]` 空档
 
 #### 3.2.7 回帖/盖楼 🔒
 `POST /api/post/{id}/comment`
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | content | String | 是 | 内容（1-2048 字符） |
-| parentId | Long | 否 | 楼中楼父楼层ID |
+| parentId | Long | 否 | 楼中楼父楼层ID（**必须是顶层楼层**） |
+| replyToCommentId | Long | 否 | 被回复的那条评论ID（可能是子回复）；不传=回复楼主层本身 |
 
-- 成功：`{ "code": 1, "msg": "盖楼成功", "data": { "id": Long, "floorNo": 3 } }`
-- Redis：楼层号 = `INCR dbd:post:floor:{postId}`（同 `comment.floor_no`）；防重复提交 `SETNX dbd:repeat:comment:{userId}`（3 秒，先校验后上锁）→ 3002；帖子 `commentCount` +1；更新 `lastCommentTime`；同步落库；删除详情/列表缓存
-- 失败：帖子不存在 → 2002；父楼层不存在 → 2002
+- 成功：`{ "code": 1, "msg": "盖楼成功", "data": { "id": Long, "floorNo": 3, "parentId": null } }`
+- `floorNo` 对楼中楼恒为 **0**；前端据此区分「你是第 N 楼」与「回复成功」
+- Redis：**只有顶层楼层**才 `INCR dbd:post:floor:{postId}`（同 `comment.floor_no`）；防重复提交 `SETNX dbd:repeat:comment:{userId}`（3 秒，先校验后上锁）→ 3002；帖子 `commentCount` +1；更新 `lastCommentTime`；同步落库；删除详情/列表缓存
+- `replyToCommentId` 决定 `comment.reply_to_user_id`（被回复者），进而决定**回复提醒发给谁**
+- 失败：帖子不存在 → 2002；父楼层不存在 / 不属于本帖 → 2002；父楼层本身是子回复 → **2001 只支持两级回复**；`replyToCommentId` 不存在或不属于本帖 → 2002
 
 ---
 
@@ -726,6 +736,47 @@
 
 ---
 
+### 3.10 消息通知 `notification`（对应前端 `src/api/notification.js`）
+
+把「回复我的帖子 / 回复我的楼层 / 赞了我的帖子」**统一封装成一条消息**，前端用 `type` 区分究竟是哪种。
+路径 `/api/notification/**` 由 `LoginInterceptor` 按 `/api/**` 自动纳入，无需在 WebConfig 额外注册。
+
+**触发点（全部收敛在 `NotificationService.notify` 一处）**
+
+| type | 含义 | 触发位置 | 接收者 |
+|---|---|---|---|
+| 1 | 回复了你的帖子 | `PostServiceImpl.addComment`（顶层回复） | 帖子作者 |
+| 2 | 回复了你 | `PostServiceImpl.addComment`（楼中楼） | `comment.reply_to_user_id` —— **你点的那条评论的作者**，不一定是楼主 |
+| 3 | 赞了你的帖子 | `PostServiceImpl.like`（仅在 0→1 新点赞那一次） | 帖子作者 |
+
+**两条统一的抑制规则（调用方不必重复判断）**
+- **不给自己发**：接收者 == 触发者则直接跳过
+- **点赞去重**：同一人对同一帖只保留一条 type=3（反复赞/取消不刷屏）；取消点赞**不撤回**已产生的通知（通知是历史记录）
+
+**为什么未读数走 DB 而不是 Redis 计数器**：帖子点赞数刚出过「Redis 写、DB 不写，两边不一致导致前台恒为 0」的事故。未读数是低频读取（导航上一个红点），`COUNT(*)` 配 `idx_user_read` 完全够用，不值得再维护一处需要双写的状态。
+
+#### 3.10.1 我的通知列表 🔒
+`GET /api/notification?page=1&size=20`
+- 成功：`{ "code": 1, "data": { "list": [ NotificationVO ], "total": Long, "page": 1, "size": 20 } }`
+- 排序：`created_at DESC, id DESC`
+- 一次联表查询补齐展示字段（触发者昵称/头像、帖子标题、回复内容摘要），**不做 N+1**；内容摘要在 SQL 侧 `LEFT(content,60)` 截断
+- 三个联表一律 `LEFT JOIN`：**帖子被删除后通知仍在**（`postTitle` 为 null，前端显示「帖子已删除」），不会整条消失
+- 触发者昵称旁的限量徽章由 `BadgeService.fillAuthors` 批量填充
+- NotificationVO 字段：`id` / `type` / `typeText`（后端算好的中文，如「回复了你的帖子」）/ `fromUser` / `postId` / `postTitle` / `commentId` / `contentSnippet` / `isRead` / `createdAt`
+- 未登录 → 2003
+
+#### 3.10.2 未读数
+`GET /api/notification/unread-count`
+- 成功：`{ "code": 1, "data": { "count": 5 } }`
+- **未登录返回 0 而不是 2003**：这个接口只服务于导航红点、会在每次路由变化时被调用，抛错会导致 token 过期后满屏错误提示
+
+#### 3.10.3 全部标记为已读 🔒
+`POST /api/notification/read-all`
+- 成功：`{ "code": 1, "msg": "已全部标为已读" }`
+- 「打开列表即自动已读」由**前端进页面时显式调用本接口**实现，而不是让 GET 列表顺手改数据 —— GET 带副作用会污染缓存语义，也让接口没法被安全地重复调用
+
+---
+
 ## 4. 接口与前端 api/ 对照表
 
 | 前端函数 | 路径 | 方法 | 鉴权 |
@@ -780,6 +831,9 @@
 | `activity.getHotSearch` | /api/search/hot | GET | - |
 | `activity.searchPosts` | /api/search/post | GET | - |
 | `activity.getNearbyPosts` | /api/nearby/post | GET | -（⚠️ GEO 同城已封存：接口保留、前端入口已移除） |
+| `notification.getNotifications` | /api/notification | GET | 🔒 |
+| `notification.getUnreadCount` | /api/notification/unread-count | GET | -（未登录返回 0） |
+| `notification.readAllNotifications` | /api/notification/read-all | POST | 🔒 |
 
 ---
 
@@ -801,6 +855,7 @@
 | 10 | 个人资料页：查看 + 修改（昵称/签名/头像/登录账号） | 阶段五（`PUT /api/user/profile`） | ✅ |
 | 11 | 限量徽章抢夺：管理后台发布 + 活动广场 + 徽章墙 + 作者角标 | 阶段六（`activity.badge_name`） | ✅ |
 | 12 | 官方公告 + 全站置顶：管理端发布公告、置顶任意帖子 | 阶段七（`post.type` + `post.bar_id` 放开 NOT NULL） | ✅ |
+| 13 | 楼中楼（固定 2 层）+ 回复提醒：子回复组装、统一消息通知 | 阶段八（`comment.reply_to_user_id` + `notification` 表） | ✅ |
 
 > 数据库建表 SQL 见 `dbd-server/src/main/resources/db/init.sql`（库名 `dbd`，9 张表 + 种子数据）。
 >
@@ -813,6 +868,7 @@
 > | 发帖城市 `post.city`（替代经纬度手输） | `dbd-server/src/main/resources/db/migration_city.sql` |
 > | 限量徽章 `activity.badge_name` + 4 个徽章活动 | `dbd-server/src/main/resources/db/migration_badge.sql` |
 > | 帖子类型 `post.type` + 公告不挂吧（`post.bar_id` 放开 NOT NULL） | `dbd-server/src/main/resources/db/migration_notice.sql` |
+> | 楼中楼 `comment.reply_to_user_id` + `idx_post_parent` + `notification` 表 | `dbd-server/src/main/resources/db/migration_notification.sql` |
 >
 > ⚠️ 执行时必须带 `--default-character-set=utf8mb4`，否则中文会二次编码乱码：
 > `mysql -u root -p --default-character-set=utf8mb4 < migration_badge.sql`

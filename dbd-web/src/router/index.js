@@ -36,6 +36,8 @@ const routes = [
   { path: '/activity', name: 'activity-plaza', component: () => import('../views/ActivityListView.vue') },
   // 单个活动详情 + 抢夺（抢楼 / 限量徽章）
   { path: '/activity/:id', name: 'activity', component: () => import('../views/ActivityView.vue') },
+  // 消息通知（回复提醒 + 点赞提醒）：需登录
+  { path: '/notification', name: 'notification', component: () => import('../views/NotificationView.vue'), meta: { requiresAuth: true } },
   // 兜底 404
   { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('../views/NotFoundView.vue') }
 ]

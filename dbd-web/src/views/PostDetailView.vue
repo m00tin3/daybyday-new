@@ -94,6 +94,63 @@ async function submitComment() {
   }
 }
 
+/* ==================== 楼中楼（固定 2 层） ==================== */
+
+// 哪一层楼展开了行内输入框（存顶层楼层的 id）
+const replyToId = ref('')
+// 正在回复的那条评论：点楼层的「回复」时为 null，点子回复的「回复」时是那条子回复
+const replyTarget = ref(null)
+const replyText = ref('')
+const replySubmitting = ref(false)
+
+/**
+ * 打开某一层的行内回复框。
+ * @param floor  该顶层楼层（结构的 parentId 恒为它）
+ * @param target 被点的子回复；不传表示回复楼层本身
+ */
+function openReply(floor, target) {
+  if (!userStore.token) {
+    goLogin()
+    return
+  }
+  replyToId.value = floor.id
+  replyTarget.value = target || null
+  replyText.value = ''
+}
+
+function closeReply() {
+  replyToId.value = ''
+  replyTarget.value = null
+  replyText.value = ''
+}
+
+async function submitReply(floor) {
+  if (!replyText.value.trim()) {
+    ElMessage.warning('先说点什么吧')
+    return
+  }
+  if (!userStore.token) {
+    goLogin()
+    return
+  }
+  replySubmitting.value = true
+  try {
+    await addComment(postId, {
+      content: replyText.value.trim(),
+      // 结构上的父楼层恒为这一层（两层结构不允许三层）
+      parentId: floor.id,
+      // 被回复的那条评论：后端据此把通知发给正确的人，而不是一律发给楼主
+      replyToCommentId: replyTarget.value?.id
+    })
+    ElMessage.success('回复成功')
+    closeReply()
+    post.value.commentCount = (Number(post.value.commentCount) || 0) + 1
+    await loadComments()
+  } catch { /* 拦截器已提示 */ } finally {
+    replySubmitting.value = false
+  }
+}
+
 onMounted(() => {
   loadPost()
   loadComments()
@@ -162,8 +219,42 @@ onMounted(() => {
             <span class="user" @click="$router.push(`/user/${c.author?.id}`)">{{ c.author?.nickname }}</span>
             <BadgePill v-for="b in c.author?.badges || []" :key="b" :name="b" class="inline-badge" />
             <span class="time">{{ c.createdAt }}</span>
+            <span class="reply-btn" @click="openReply(c)">回复</span>
           </div>
           <div class="floor-content">{{ c.content }}</div>
+
+          <!-- 楼中楼：只有前几条预览，其余靠「共 N 条回复」告知 -->
+          <div v-if="c.replies?.length" class="sub-list">
+            <div v-for="r in c.replies" :key="r.id" class="sub-item">
+              <span class="sub-user" @click="$router.push(`/user/${r.author?.id}`)">{{ r.author?.nickname }}</span>
+              <BadgePill v-for="b in r.author?.badges || []" :key="b" :name="b" class="inline-badge" />
+              <!-- 只有"回复的不是楼主层本身"时才显示 @，避免满屏「回复 @楼主」 -->
+              <span v-if="r.replyToNickname && r.replyToUserId !== c.author?.id" class="sub-at">
+                回复 <span class="sub-at-name">@{{ r.replyToNickname }}</span>
+              </span>
+              <span class="sub-content">{{ r.content }}</span>
+              <span class="sub-time">{{ r.createdAt }}</span>
+              <span class="reply-btn" @click="openReply(c, r)">回复</span>
+            </div>
+            <div v-if="c.replyCount > c.replies.length" class="sub-more">共 {{ c.replyCount }} 条回复</div>
+          </div>
+
+          <!-- 行内回复框：同一时刻只展开一层 -->
+          <div v-if="replyToId === c.id" class="sub-reply-box">
+            <el-input
+              v-model="replyText"
+              type="textarea"
+              :rows="2"
+              maxlength="2048"
+              :placeholder="replyTarget ? `回复 @${replyTarget.author?.nickname}` : `回复 ${c.author?.nickname}`"
+            />
+            <div class="sub-reply-actions">
+              <el-button size="small" @click="closeReply">取消</el-button>
+              <el-button size="small" type="primary" :loading="replySubmitting" @click="submitReply(c)">
+                回复
+              </el-button>
+            </div>
+          </div>
         </div>
       </div>
       <el-pagination
@@ -235,6 +326,23 @@ onMounted(() => {
 /* 作者昵称旁的限量徽章角标（帖子正文头部与各楼层共用） */
 .inline-badge { margin-left: 5px; }
 .floor-content { font-size: 14px; line-height: 1.6; word-break: break-word; }
+.floor-head .reply-btn { color: #bbb; margin-left: 12px; cursor: pointer; }
+.floor-head .reply-btn:hover { color: #4e6ef2; }
+
+/* ==================== 楼中楼 ==================== */
+.sub-list { margin-top: 8px; padding: 6px 10px; background: #f7f8fa; border-radius: 4px; }
+.sub-item { font-size: 13px; line-height: 1.7; padding: 3px 0; border-bottom: 1px dashed #ececec; }
+.sub-item:last-child { border-bottom: none; }
+.sub-user { color: #4e6ef2; cursor: pointer; }
+.sub-at { color: #999; }
+.sub-at-name { color: #4e6ef2; }
+.sub-content { color: #333; margin-left: 4px; word-break: break-word; }
+.sub-time { color: #bbb; font-size: 12px; margin-left: 8px; }
+.sub-item .reply-btn { color: #bbb; font-size: 12px; margin-left: 8px; cursor: pointer; }
+.sub-item .reply-btn:hover { color: #4e6ef2; }
+.sub-more { font-size: 12px; color: #4e6ef2; padding-top: 6px; }
+.sub-reply-box { margin-top: 10px; }
+.sub-reply-actions { text-align: right; margin-top: 6px; }
 .pager { padding: 12px 0; justify-content: center; }
 .reply-box { margin-top: 16px; position: relative; }
 .reply-actions { text-align: right; margin-top: 8px; }
