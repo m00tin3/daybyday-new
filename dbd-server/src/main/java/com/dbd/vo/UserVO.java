@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.Data;
 
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 
 /**
  * 用户视图对象（对应 API.md §2.1 UserVO）。
@@ -38,6 +39,14 @@ public class UserVO {
 
     /** 角色 0普通用户 1管理员（前端据此显示"管理后台"入口；最终鉴权仍由后端负责） */
     private Integer role;
+
+    /**
+     * 已获得的限量徽章称号（如 ["凤川祥", "千早樱"]）。
+     * <p>由 {@link com.dbd.service.BadgeService} 在列表组装完成后**批量填充**，
+     * 不在 {@link #from(User)} 里查库——否则每个作者一次 SQL 就是 N+1。
+     * 应用场景：帖子/楼层的作者昵称旁挂角标。</p>
+     */
+    private List<String> badges;
 
     /** entity → VO（时间统一 yyyy-MM-dd HH:mm:ss） */
     public static UserVO from(User user) {

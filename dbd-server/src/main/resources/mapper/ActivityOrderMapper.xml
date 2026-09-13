@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.dbd.mapper.ActivityOrderMapper">
+
+    <!--
+      徽章查询的公共列。
+      只取 type=2（限量徽章）且 badge_name 非空的活动——抢楼活动（type=1）
+      没有称号，不应该出现在任何徽章展示位。
+      status <> 2 排除「已取消」的领取记录，保证取消资格后徽章同步消失。
+    -->
+    <sql id="badgeColumns">
+        ao.activity_id AS activity_id,
+        ao.user_id     AS user_id,
+        DATE_FORMAT(ao.created_at, '%Y-%m-%d %H:%i:%s') AS awarded_at,
+        a.badge_name   AS badge_name,
+        a.title        AS title,
+        a.award_desc   AS award_desc
+    </sql>
+
+    <sql id="badgeFrom">
+        FROM activity_order ao
+        JOIN activity a ON a.id = ao.activity_id
+        WHERE a.type = 2
+          AND a.badge_name IS NOT NULL
+          AND ao.status &lt;&gt; 2
+    </sql>
+
+    <!-- 批量：帖子/楼层列表一次取多个作者的徽章，避免 N+1 -->
+    <select id="selectBadgesByUserIds" resultType="com.dbd.vo.BadgeVO">
+        SELECT
+        <include refid="badgeColumns"/>
+        <include refid="badgeFrom"/>
+          AND ao.user_id IN
+        <foreach collection="userIds" item="uid" open="(" separator="," close=")">
+            #{uid}
+        </foreach>
+        ORDER BY ao.created_at DESC
+    </select>
+
+    <!-- 单个用户：徽章墙 -->
+    <select id="selectBadgesByUserId" resultType="com.dbd.vo.BadgeVO">
+        SELECT
+        <include refid="badgeColumns"/>
+        <include refid="badgeFrom"/>
+          AND ao.user_id = #{userId}
+        ORDER BY ao.created_at DESC
+    </select>
+
+    <delete id="deleteByActivityId">
+        DELETE FROM activity_order WHERE activity_id = #{activityId}
+    </delete>
+
+</mapper>

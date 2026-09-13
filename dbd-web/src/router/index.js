@@ -32,7 +32,9 @@ const routes = [
   // 恢复方式：打开下面这行，并在 App.vue 导航与 HomeView 侧栏加回链接即可
   //（NearbyView.vue 与后端 /api/nearby 代码均保留未删）。
   // { path: '/nearby', name: 'nearby', component: () => import('../views/NearbyView.vue') },
-  // 抢楼 / 徽章秒杀
+  // 限量徽章抢夺活动广场（列表）
+  { path: '/activity', name: 'activity-plaza', component: () => import('../views/ActivityListView.vue') },
+  // 单个活动详情 + 抢夺（抢楼 / 限量徽章）
   { path: '/activity/:id', name: 'activity', component: () => import('../views/ActivityView.vue') },
   // 兜底 404
   { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('../views/NotFoundView.vue') }

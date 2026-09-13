@@ -19,6 +19,7 @@ import com.dbd.mapper.PostFavoriteMapper;
 import com.dbd.mapper.PostLikeMapper;
 import com.dbd.mapper.PostMapper;
 import com.dbd.mapper.UserMapper;
+import com.dbd.service.BadgeService;
 import com.dbd.service.FeedService;
 import com.dbd.service.PostService;
 import com.dbd.utils.RedisIdWorker;
@@ -68,6 +69,8 @@ public class PostServiceImpl implements PostService {
     private final StringRedisTemplate stringRedisTemplate;
     private final RedisIdWorker redisIdWorker;
     private final FeedService feedService;
+    /** 作者徽章批量填充（帖子列表/详情/楼层），避免每个作者一次查询 */
+    private final BadgeService badgeService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 详情缓存基础 TTL：10 分钟 + 0~5 分钟随机偏移（防雪崩） */
@@ -84,7 +87,7 @@ public class PostServiceImpl implements PostService {
                            PostLikeMapper postLikeMapper, PostFavoriteMapper postFavoriteMapper,
                            UserMapper userMapper, BarMapper barMapper,
                            StringRedisTemplate stringRedisTemplate, RedisIdWorker redisIdWorker,
-                           FeedService feedService) {
+                           FeedService feedService, BadgeService badgeService) {
         this.postMapper = postMapper;
         this.commentMapper = commentMapper;
         this.postLikeMapper = postLikeMapper;
@@ -94,6 +97,7 @@ public class PostServiceImpl implements PostService {
         this.stringRedisTemplate = stringRedisTemplate;
         this.redisIdWorker = redisIdWorker;
         this.feedService = feedService;
+        this.badgeService = badgeService;
     }
 
     /* ==================== 列表 ==================== */
@@ -124,6 +128,8 @@ public class PostServiceImpl implements PostService {
                                          Integer page, Integer size) {
         IPage<PostRow> rows = postMapper.selectPostPage(new Page<>(page, size), barId, userId, city, keyword);
         List<PostVO> list = rows.getRecords().stream().map(PostVO::fromRow).toList();
+        // 一次批量取全页作者的徽章（内部按用户缓存），列表页不能逐个作者查库
+        badgeService.fillPostAuthors(list);
         return PageResult.of(list, rows.getTotal(), page, size);
     }
 
@@ -246,7 +252,14 @@ public class PostServiceImpl implements PostService {
         stringRedisTemplate.delete(RedisKeyConstants.POST_CACHE + id + ":lock");
     }
 
-    /** 请求级状态：当前用户是否点赞/收藏（实时查 Redis），浏览/UV 计数 */
+    /**
+     * 请求级状态：当前用户是否点赞/收藏（实时查 Redis），浏览/UV 计数，作者徽章。
+     *
+     * <p>徽章刻意放在这里而不是 buildDetail 里：buildDetail 的结果会写入
+     * 10 分钟详情缓存，把徽章一起缓存进去的话，用户刚抢到徽章也要等缓存过期
+     * 才在帖子详情看得到。放在本方法（缓存命中/未命中两条路径都会走）里，
+     * 每次请求都按当前的徽章缓存重新覆盖一次，缓存里存的始终是不带徽章的版本。</p>
+     */
     private void fillRequestState(Long id, PostVO vo) {
         if (vo == null) {
             return;
@@ -259,6 +272,7 @@ public class PostServiceImpl implements PostService {
             vo.setIsLiked(false);
             vo.setIsFavorited(false);
         }
+        badgeService.fillAuthor(vo.getAuthor());
         countView(id, vo);
     }
 
@@ -402,6 +416,8 @@ public class PostServiceImpl implements PostService {
         for (Comment c : records) {
             list.add(CommentVO.from(c, userMap.get(c.getUserId())));
         }
+        // 楼层作者同样要挂徽章：一层楼一个作者，必须批量查（见 BadgeService.badgeNamesOf）
+        badgeService.fillCommentAuthors(list);
         return PageResult.of(list, rows.getTotal(), page, size);
     }
 

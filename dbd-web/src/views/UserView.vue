@@ -4,8 +4,10 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getUserProfile, getUserPosts, getUserFavorites, getSignCalendar, followUser } from '../api/user'
+import { getUserBadges } from '../api/activity'
 import { useUserStore } from '../stores/user'
 import PostCard from '../components/PostCard.vue'
+import BadgeWall from '../components/BadgeWall.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,6 +18,7 @@ const profile = ref(null)
 const tab = ref('posts')
 const posts = ref([])
 const favorites = ref([])
+const badges = ref([])
 const signInfo = ref({ signList: [], signCount: 0 })
 const loading = ref(false)
 
@@ -44,8 +47,15 @@ async function load() {
   } catch {
     profile.value = null
   }
-  await Promise.all([loadPosts(), loadSign()])
+  await Promise.all([loadPosts(), loadSign(), loadBadges()])
   loading.value = false
+}
+
+async function loadBadges() {
+  try {
+    const res = await getUserBadges(userId)
+    badges.value = res.data ?? []
+  } catch { badges.value = [] }
 }
 
 async function loadPosts() {
@@ -129,8 +139,9 @@ onMounted(load)
           </el-tabs>
         </div>
 
-        <!-- 右侧签到日历 -->
+        <!-- 右侧：徽章墙 + 签到日历 -->
         <div class="side-area">
+          <BadgeWall :badges="badges" :show-empty-hint="isSelf" class="side-card" />
           <div class="sign-card">
             <h3>{{ year }} 年 {{ month }} 月签到日历</h3>
             <p class="sign-count">本月已签到 <b>{{ signInfo.signCount }}</b> 天</p>
@@ -164,7 +175,8 @@ onMounted(load)
 .actions { display: flex; gap: 8px; }
 .body-grid { display: grid; grid-template-columns: 1fr 300px; gap: 16px; margin-top: 16px; }
 .content-area { background: #fff; border-radius: 6px; padding: 0 18px 8px; }
-.side-area { align-self: start; }
+.side-area { align-self: start; display: flex; flex-direction: column; gap: 16px; }
+.side-card { margin: 0; }
 .sign-card { background: #fff; border-radius: 6px; padding: 16px; }
 .sign-card h3 { font-size: 14px; margin-bottom: 8px; }
 .sign-count { font-size: 12px; color: #999; margin-bottom: 10px; }

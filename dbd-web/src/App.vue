@@ -17,6 +17,7 @@ const showTopbar = computed(() => route.name !== 'login')
         <router-link to="/" class="logo">Day-<span>BY-</span>Day</router-link>
         <nav class="nav-links">
           <router-link to="/">首页</router-link>
+          <router-link to="/activity">限量徽章</router-link>
           <router-link to="/feed">关注</router-link>
           <router-link to="/rank">排行</router-link>
           <router-link to="/city">城市</router-link>

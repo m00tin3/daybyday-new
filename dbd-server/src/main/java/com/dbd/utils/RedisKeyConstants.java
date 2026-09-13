@@ -100,6 +100,15 @@ public final class RedisKeyConstants {
     /** 一人一单标记：dbd:seckill:order:{activityId}:{userId} → userId（Lua SETNX 原子写入，永久） */
     public static final String SECKILL_ORDER = "dbd:seckill:order:";
 
+    /**
+     * 用户徽章列表缓存：dbd:badge:user:{userId} → BadgeVO 数组 JSON（空数组也缓存防穿透）。
+     * <p>徽章会显示在帖子/楼层的作者昵称旁，是列表页的热点数据；一个列表页可能有几十个
+     * 不同作者，逐个查库就是 N+1，因此按用户维度缓存。领取成功后由
+     * {@link com.dbd.service.SeckillOrderPersistService} 落库成功时删除该 key。</p>
+     */
+    public static final String BADGE_USER = "dbd:badge:user:";
+    public static final Duration BADGE_USER_TTL = Duration.ofMinutes(10);
+
     /* ---------- 关注 Feed 流（阶段三，FeedServiceImpl） ---------- */
 
     /** 关注 Feed 时间线：dbd:feed:user:{userId} → ZSet，member=postId，score=发帖时间戳(ms) */

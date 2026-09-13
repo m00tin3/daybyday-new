@@ -6,10 +6,22 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getAdminPosts, hidePost, restorePost, deletePost,
-  getAdminBars, createBar, hideBar, restoreBar, deleteBar
+  getAdminBars, createBar, hideBar, restoreBar, deleteBar,
+  getAdminActivities, createActivity, updateActivity, endActivity, deleteActivity
 } from '../api/admin'
+import BadgePill from '../components/BadgePill.vue'
 
 const tab = ref('post')
+
+/** 常用徽章称号：下拉里可直接选，也允许管理员手输新称号（allow-create） */
+const PRESET_BADGES = ['凤川祥', '苏幽离', '千早樱', '苦来兮苦宗主']
+
+/** 活动状态映射（由后端按时间动态计算：0未开始 1进行中 2已结束） */
+const ACTIVITY_STATUS = {
+  0: { text: '未开始', type: 'warning' },
+  1: { text: '进行中', type: 'success' },
+  2: { text: '已结束', type: 'info' }
+}
 
 /** 帖子状态映射（与后端 Post 常量一致） */
 const POST_STATUS = {
@@ -174,6 +186,141 @@ async function onDeleteBar(row) {
   } catch { /* 拦截器已提示 */ }
 }
 
+/* ==================== 限量徽章活动管理 ==================== */
+
+const actQuery = reactive({ keyword: '', status: null, page: 1, size: 10 })
+const actList = ref([])
+const actTotal = ref(0)
+const actLoading = ref(false)
+
+const actVisible = ref(false)
+const actSaving = ref(false)
+/** 编辑中的活动 ID；null 表示"发布新活动" */
+const actEditingId = ref(null)
+const actForm = reactive({
+  badgeName: '',
+  stock: 10,
+  beginTime: '',
+  endTime: '',
+  awardDesc: ''
+})
+
+async function loadActivities() {
+  actLoading.value = true
+  try {
+    const res = await getAdminActivities({ ...actQuery })
+    actList.value = res.data?.list ?? []
+    actTotal.value = res.data?.total ?? 0
+  } catch {
+    actList.value = []
+    actTotal.value = 0
+  } finally {
+    actLoading.value = false
+  }
+}
+
+function searchActivities() {
+  actQuery.page = 1
+  loadActivities()
+}
+
+function resetActQuery() {
+  actQuery.keyword = ''
+  actQuery.status = null
+  searchActivities()
+}
+
+/** 本地时间 → 'YYYY-MM-DD HH:mm:ss'（后端按这个格式解析，不用 toISOString 以免转成 UTC） */
+function fmt(d) {
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+function openCreateActivity() {
+  const now = new Date()
+  const week = new Date(now.getTime() + 7 * 24 * 3600 * 1000)
+  actEditingId.value = null
+  actForm.badgeName = ''
+  actForm.stock = 10
+  actForm.beginTime = fmt(now)
+  actForm.endTime = fmt(week)
+  actForm.awardDesc = ''
+  actVisible.value = true
+}
+
+function openEditActivity(row) {
+  actEditingId.value = row.id
+  actForm.badgeName = row.badgeName || ''
+  actForm.stock = row.stock
+  actForm.beginTime = row.beginTime
+  actForm.endTime = row.endTime
+  actForm.awardDesc = row.awardDesc || ''
+  actVisible.value = true
+}
+
+async function submitActivity() {
+  const name = actForm.badgeName.trim()
+  if (!name) {
+    ElMessage.warning('请填写徽章称号')
+    return
+  }
+  if (!actForm.beginTime || !actForm.endTime) {
+    ElMessage.warning('请选择开始与结束时间')
+    return
+  }
+  actSaving.value = true
+  const payload = {
+    badgeName: name,
+    stock: Number(actForm.stock),
+    beginTime: actForm.beginTime,
+    endTime: actForm.endTime,
+    awardDesc: actForm.awardDesc.trim()
+  }
+  try {
+    if (actEditingId.value) {
+      await updateActivity(actEditingId.value, payload)
+      ElMessage.success('已保存（已抢到的份数保持不变）')
+    } else {
+      await createActivity(payload)
+      ElMessage.success('发布成功')
+    }
+    actVisible.value = false
+    searchActivities()
+  } catch { /* 拦截器已提示（称号重复 / 时间不合法等） */ }
+  finally { actSaving.value = false }
+}
+
+async function onEndActivity(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定提前结束「${row.badgeName}」？\n活动将立刻不可再抢，但已经抢到的人徽章仍然保留。`,
+      '确认结束',
+      { type: 'warning', confirmButtonText: '确认结束', cancelButtonText: '取消' }
+    )
+  } catch { return }
+  try {
+    await endActivity(row.id)
+    ElMessage.success('已结束')
+    loadActivities()
+  } catch { /* 拦截器已提示 */ }
+}
+
+async function onDeleteActivity(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定物理删除活动「${row.badgeName}」？\n已发放的 ${row.awardedCount || 0} 枚徽章会连同领取记录一起消失，且不可恢复。`,
+      '危险操作确认',
+      { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch { return }
+  try {
+    await deleteActivity(row.id)
+    ElMessage.success('已删除')
+    if (actList.value.length === 1 && actQuery.page > 1) actQuery.page--
+    loadActivities()
+  } catch { /* 拦截器已提示 */ }
+}
+
 function statusText(s) {
   return POST_STATUS[s]?.text ?? s
 }
@@ -184,6 +331,7 @@ function statusType(s) {
 onMounted(() => {
   loadPosts()
   loadBars()
+  loadActivities()
 })
 </script>
 
@@ -279,6 +427,68 @@ onMounted(() => {
                        :total="barTotal" :current-page="barQuery.page" :page-size="barQuery.size"
                        @current-change="(p) => { barQuery.page = p; loadBars() }" />
       </el-tab-pane>
+
+      <!-- ==================== 限量徽章活动管理 ==================== -->
+      <el-tab-pane label="活动管理" name="activity">
+        <div class="toolbar">
+          <el-input v-model="actQuery.keyword" placeholder="搜索徽章称号或标题" clearable style="width: 240px"
+                    @keyup.enter="searchActivities" />
+          <el-select v-model="actQuery.status" placeholder="全部状态" clearable style="width: 140px">
+            <el-option label="未开始" :value="0" />
+            <el-option label="进行中" :value="1" />
+            <el-option label="已结束" :value="2" />
+          </el-select>
+          <el-button type="primary" @click="searchActivities">查询</el-button>
+          <el-button @click="resetActQuery">重置</el-button>
+          <el-button type="success" class="create-btn" @click="openCreateActivity">+ 发布限量徽章</el-button>
+        </div>
+
+        <el-table :data="actList" v-loading="actLoading" border stripe size="small">
+          <el-table-column label="徽章称号" width="150">
+            <template #default="{ row }">
+              <BadgePill v-if="row.badgeName" :name="row.badgeName" />
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="title" label="活动标题" min-width="180" show-overflow-tooltip />
+          <el-table-column label="发放进度" width="130" align="center">
+            <template #default="{ row }">
+              <span class="progress-num">{{ row.awardedCount || 0 }}</span>
+              <span class="muted"> / {{ row.stock }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="剩余" width="80" align="right">
+            <template #default="{ row }">
+              <b :class="row.remainStock > 0 ? 'remain-ok' : 'remain-none'">{{ row.remainStock ?? row.stock }}</b>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag :type="ACTIVITY_STATUS[row.status]?.type || 'info'" size="small">
+                {{ ACTIVITY_STATUS[row.status]?.text || row.status }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="起止时间" width="200">
+            <template #default="{ row }">
+              <div class="time-cell">{{ row.beginTime }}</div>
+              <div class="time-cell">{{ row.endTime }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="215" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" @click="openEditActivity(row)">编辑</el-button>
+              <el-button v-if="row.status === 1" link type="warning" size="small" @click="onEndActivity(row)">提前结束</el-button>
+              <el-button link type="success" size="small" @click="$router.push(`/activity/${row.id}`)">前台查看</el-button>
+              <el-button link type="danger" size="small" @click="onDeleteActivity(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-pagination class="pager" background layout="total, prev, pager, next"
+                       :total="actTotal" :current-page="actQuery.page" :page-size="actQuery.size"
+                       @current-change="(p) => { actQuery.page = p; loadActivities() }" />
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 创建贴吧 -->
@@ -300,6 +510,71 @@ onMounted(() => {
         <el-button type="primary" :loading="creating" @click="submitCreate">创建</el-button>
       </template>
     </el-dialog>
+
+    <!-- 发布 / 编辑限量徽章 -->
+    <el-dialog v-model="actVisible" :title="actEditingId ? '编辑限量徽章' : '发布限量徽章'" width="560px">
+      <el-form label-width="96px">
+        <el-form-item label="徽章称号" required>
+          <!-- filterable + allow-create：可选常用称号，也能直接输入新称号 -->
+          <el-select
+            v-model="actForm.badgeName"
+            filterable
+            allow-create
+            default-first-option
+            placeholder="选择或输入称号（如：凤川祥）"
+            style="width: 100%"
+          >
+            <el-option v-for="b in PRESET_BADGES" :key="b" :label="b" :value="b" />
+          </el-select>
+          <p class="field-tip">称号全站唯一，同名活动只能有一个；输入新称号后回车即可创建。</p>
+        </el-form-item>
+
+        <el-form-item label="发放数量" required>
+          <el-input-number v-model="actForm.stock" :min="1" :max="100000" style="width: 180px" />
+          <span class="field-tip inline">限量份数，抢完即止</span>
+        </el-form-item>
+
+        <el-form-item label="开始时间" required>
+          <el-date-picker
+            v-model="actForm.beginTime"
+            type="datetime"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            placeholder="选择开始时间"
+            style="width: 100%"
+          />
+        </el-form-item>
+
+        <el-form-item label="结束时间" required>
+          <el-date-picker
+            v-model="actForm.endTime"
+            type="datetime"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            placeholder="选择结束时间"
+            style="width: 100%"
+          />
+        </el-form-item>
+
+        <el-form-item label="奖励说明">
+          <el-input v-model="actForm.awardDesc" maxlength="255" show-word-limit
+                    placeholder="可选，留空则自动生成「限量 N 枚，先到先得」" />
+        </el-form-item>
+      </el-form>
+
+      <el-alert
+        v-if="actEditingId"
+        type="info"
+        :closable="false"
+        show-icon
+        title="调整发放数量不会影响已抢到的份数：已抢 5 份、总量改为 8，则剩余可抢为 3。"
+      />
+
+      <template #footer>
+        <el-button @click="actVisible = false">取消</el-button>
+        <el-button type="primary" :loading="actSaving" @click="submitActivity">
+          {{ actEditingId ? '保存' : '发布' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -312,4 +587,11 @@ onMounted(() => {
 .toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
 .create-btn { margin-left: auto; }
 .pager { margin-top: 14px; justify-content: flex-end; }
+.muted { color: #bbb; }
+.progress-num { color: #f56c6c; font-weight: bold; font-size: 14px; }
+.remain-ok { color: #67c23a; }
+.remain-none { color: #c0c4cc; }
+.time-cell { font-size: 11px; color: #999; line-height: 1.5; }
+.field-tip { font-size: 11px; color: #bbb; line-height: 1.6; }
+.field-tip.inline { margin-left: 10px; }
 </style>

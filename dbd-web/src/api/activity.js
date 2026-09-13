@@ -1,5 +1,10 @@
-// 活动/搜索/同城模块接口（对应 API.md §3.6 / §3.7 / §3.8）
+// 活动（限量徽章抢夺）/ 搜索 / 同城模块接口（对应 API.md §3.6 / §3.7 / §3.8）
 import request from '../utils/request'
+
+/** 活动列表（活动广场）GET /api/activity?type=2 */
+export function getActivityList(params) {
+  return request.get('/activity', { params })
+}
 
 /** 秒杀活动详情 GET /api/activity/{id} */
 export function getActivityInfo(id) {
@@ -9,6 +14,16 @@ export function getActivityInfo(id) {
 /** 抢楼/领取徽章（Lua 秒杀）🔒 POST /api/activity/{id}/grab */
 export function grabActivity(id) {
   return request.post(`/activity/${id}/grab`)
+}
+
+/** 我的徽章墙 🔒 GET /api/activity/my/badges */
+export function getMyBadges() {
+  return request.get('/activity/my/badges')
+}
+
+/** 指定用户的徽章墙（公开）GET /api/activity/user/{userId}/badges */
+export function getUserBadges(userId) {
+  return request.get(`/activity/user/${userId}/badges`)
 }
 
 /** 热搜词（ZSet）GET /api/search/hot */
@@ -21,7 +36,7 @@ export function searchPosts(keyword, params) {
   return request.get('/search/post', { params: { keyword, ...params } })
 }
 
-/** 附近帖子（GEO）GET /api/nearby/post */
+/** 附近帖子（GEO，功能已封存）GET /api/nearby/post */
 export function getNearbyPosts(params) {
   return request.get('/nearby/post', { params })
 }

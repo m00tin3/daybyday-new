@@ -8,6 +8,7 @@ import com.dbd.entity.User;
 import com.dbd.mapper.BarMapper;
 import com.dbd.mapper.PostMapper;
 import com.dbd.mapper.UserMapper;
+import com.dbd.service.BadgeService;
 import com.dbd.service.NearbyService;
 import com.dbd.utils.RedisKeyConstants;
 import com.dbd.vo.PostVO;
@@ -45,13 +46,16 @@ public class NearbyServiceImpl implements NearbyService {
     private final PostMapper postMapper;
     private final UserMapper userMapper;
     private final BarMapper barMapper;
+    /** GEO 同城已封存，但接口仍在，徽章展示口径与其他列表保持一致 */
+    private final BadgeService badgeService;
 
     public NearbyServiceImpl(StringRedisTemplate stringRedisTemplate, PostMapper postMapper,
-                             UserMapper userMapper, BarMapper barMapper) {
+                             UserMapper userMapper, BarMapper barMapper, BadgeService badgeService) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.postMapper = postMapper;
         this.userMapper = userMapper;
         this.barMapper = barMapper;
+        this.badgeService = badgeService;
     }
 
     @Override
@@ -111,6 +115,7 @@ public class NearbyServiceImpl implements NearbyService {
             vo.setDistance(Math.round(h.distance() * 10) / 10.0); // 保留 1 位小数
             list.add(vo);
         }
+        badgeService.fillPostAuthors(list);
         return list;
     }
 

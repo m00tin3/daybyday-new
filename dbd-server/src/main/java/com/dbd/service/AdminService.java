@@ -1,7 +1,9 @@
 package com.dbd.service;
 
 import com.dbd.common.PageResult;
+import com.dbd.dto.ActivityCreateDTO;
 import com.dbd.dto.BarCreateDTO;
+import com.dbd.vo.ActivityVO;
 import com.dbd.vo.BarVO;
 import com.dbd.vo.PostVO;
 
@@ -46,4 +48,26 @@ public interface AdminService {
 
     /** 物理删除吧：连同其下全部帖子（含各帖子关联数据）一并清理 */
     void deleteBar(Long barId);
+
+    /* ---------- 限量徽章活动 ---------- */
+
+    /**
+     * 活动管理列表（含未开始/已结束的历史活动）。
+     *
+     * @param keyword 徽章称号或活动标题模糊匹配
+     * @param status  动态状态 0未开始 1进行中 2已结束；null 表示不限
+     */
+    PageResult<ActivityVO> activityList(String keyword, Integer status, Integer page, Integer size);
+
+    /** 发布限量徽章活动，返回新活动 ID（称号全局唯一） */
+    Long createActivity(ActivityCreateDTO dto);
+
+    /** 编辑活动：称号 / 数量 / 起止时间；已抢数量在调低总量时保持不变 */
+    void updateActivity(Long activityId, ActivityCreateDTO dto);
+
+    /** 物理删除活动：连同领取记录与 Redis 库存、一人一单标记一并清理 */
+    void deleteActivity(Long activityId);
+
+    /** 提前结束活动：把结束时间改为当前时间（保留领取记录，徽章仍然有效） */
+    void endActivity(Long activityId);
 }

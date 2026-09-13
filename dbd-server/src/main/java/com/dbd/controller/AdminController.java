@@ -2,8 +2,10 @@ package com.dbd.controller;
 
 import com.dbd.common.PageResult;
 import com.dbd.common.Result;
+import com.dbd.dto.ActivityCreateDTO;
 import com.dbd.dto.BarCreateDTO;
 import com.dbd.service.AdminService;
+import com.dbd.vo.ActivityVO;
 import com.dbd.vo.BarVO;
 import com.dbd.vo.PostVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -109,6 +112,46 @@ public class AdminController {
     @DeleteMapping("/bar/{id}")
     public Result<Void> deleteBar(@PathVariable Long id) {
         adminService.deleteBar(id);
+        return Result.ok(null, "已删除");
+    }
+
+    /* ==================== 限量徽章活动管理 ==================== */
+
+    @Operation(summary = "活动管理列表 🔒管理员（含未开始/已结束，剩余库存实时）")
+    @GetMapping("/activity/list")
+    public Result<PageResult<ActivityVO>> activityList(@RequestParam(required = false) String keyword,
+                                                       @RequestParam(required = false) Integer status,
+                                                       @RequestParam(required = false, defaultValue = "1") Integer page,
+                                                       @RequestParam(required = false, defaultValue = "10") Integer size) {
+        return Result.ok(adminService.activityList(keyword, status, page, size));
+    }
+
+    @Operation(summary = "发布限量徽章活动 🔒管理员（称号全局唯一）")
+    @PostMapping("/activity")
+    public Result<Map<String, Object>> createActivity(@Valid @RequestBody ActivityCreateDTO dto) {
+        Long id = adminService.createActivity(dto);
+        // 同创建贴吧：新活动 ID 会回传前端用于跳转，必须按字符串传输避免 JS 精度丢失
+        return Result.ok(Map.of("id", String.valueOf(id)), "发布成功");
+    }
+
+    @Operation(summary = "编辑限量徽章活动 🔒管理员（保持已抢数量不变）")
+    @PutMapping("/activity/{id}")
+    public Result<Void> updateActivity(@PathVariable Long id, @Valid @RequestBody ActivityCreateDTO dto) {
+        adminService.updateActivity(id, dto);
+        return Result.ok(null, "已保存");
+    }
+
+    @Operation(summary = "提前结束活动 🔒管理员（已抢到的徽章保留）")
+    @PostMapping("/activity/{id}/end")
+    public Result<Void> endActivity(@PathVariable Long id) {
+        adminService.endActivity(id);
+        return Result.ok(null, "已结束");
+    }
+
+    @Operation(summary = "删除活动 🔒管理员（物理删除，领取记录与徽章一并失效，不可恢复）")
+    @DeleteMapping("/activity/{id}")
+    public Result<Void> deleteActivity(@PathVariable Long id) {
+        adminService.deleteActivity(id);
         return Result.ok(null, "已删除");
     }
 }

@@ -8,7 +8,9 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getUserInfo } from '../api/auth'
 import { getUserProfile, updateUserProfile } from '../api/user'
+import { getMyBadges } from '../api/activity'
 import { useUserStore } from '../stores/user'
+import BadgeWall from '../components/BadgeWall.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -17,6 +19,8 @@ const loading = ref(false)
 const saving = ref(false)
 const editing = ref(false)
 const stats = ref({ postCount: 0, followerCount: 0, followingCount: 0 })
+/** 我的限量徽章（徽章墙） */
+const badges = ref([])
 
 const form = reactive({
   nickname: '',
@@ -65,6 +69,14 @@ async function load() {
   } finally {
     loading.value = false
   }
+  loadBadges()
+}
+
+async function loadBadges() {
+  try {
+    const res = await getMyBadges()
+    badges.value = res.data ?? []
+  } catch { badges.value = [] }
 }
 
 function cancelEdit() {
@@ -123,6 +135,9 @@ onMounted(load)
       </div>
     </div>
 
+    <!-- 我的限量徽章墙 -->
+    <BadgeWall :badges="badges" class="card wall-card" />
+
     <!-- 编辑表单 -->
     <div v-if="editing" class="card">
       <h3 class="form-title">编辑资料</h3>
@@ -162,6 +177,7 @@ onMounted(load)
 <style scoped>
 .profile-page { max-width: 880px; margin: 16px auto; }
 .card { background: #fff; border-radius: 6px; padding: 20px; margin-bottom: 16px; }
+.wall-card { padding: 16px 20px; }
 .head { display: flex; align-items: center; gap: 16px; }
 .avatar { width: 72px; height: 72px; border-radius: 50%; background: #4e6ef2; color: #fff; font-size: 32px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }

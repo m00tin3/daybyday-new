@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getPostDetail, likePost, favoritePost, getComments, addComment } from '../api/post'
 import { useUserStore } from '../stores/user'
+import BadgePill from '../components/BadgePill.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -109,6 +110,7 @@ onMounted(() => {
             </div>
             <div class="sub">
               <span class="user" @click="$router.push(`/user/${post.author?.id}`)">{{ post.author?.nickname }}</span>
+              <BadgePill v-for="b in post.author?.badges || []" :key="b" :name="b" class="inline-badge" />
               ·
               <span class="bar" @click="$router.push(`/bar/${post.barId}`)">{{ post.barName }}</span>
               <template v-if="post.city">
@@ -147,6 +149,7 @@ onMounted(() => {
           <div class="floor-head">
             <span class="floor-no">{{ c.floorNo }}楼</span>
             <span class="user" @click="$router.push(`/user/${c.author?.id}`)">{{ c.author?.nickname }}</span>
+            <BadgePill v-for="b in c.author?.badges || []" :key="b" :name="b" class="inline-badge" />
             <span class="time">{{ c.createdAt }}</span>
           </div>
           <div class="floor-content">{{ c.content }}</div>
@@ -211,6 +214,8 @@ onMounted(() => {
 .floor-no { color: #4e6ef2; font-weight: bold; margin-right: 8px; }
 .floor-head .user { color: #4e6ef2; cursor: pointer; }
 .floor-head .time { color: #bbb; margin-left: 8px; }
+/* 作者昵称旁的限量徽章角标（帖子正文头部与各楼层共用） */
+.inline-badge { margin-left: 5px; }
 .floor-content { font-size: 14px; line-height: 1.6; word-break: break-word; }
 .pager { padding: 12px 0; justify-content: center; }
 .reply-box { margin-top: 16px; }

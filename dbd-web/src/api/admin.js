@@ -51,3 +51,30 @@ export function restoreBar(id) {
 export function deleteBar(id) {
   return request.delete(`/admin/bar/${id}`)
 }
+
+/* ---------- 限量徽章活动管理 ---------- */
+
+/** 活动管理列表（含未开始/已结束）GET /api/admin/activity/list */
+export function getAdminActivities(params) {
+  return request.get('/admin/activity/list', { params })
+}
+
+/** 发布限量徽章活动 POST /api/admin/activity */
+export function createActivity(data) {
+  return request.post('/admin/activity', data)
+}
+
+/** 编辑限量徽章活动（保持已抢数量不变）PUT /api/admin/activity/{id} */
+export function updateActivity(id, data) {
+  return request.put(`/admin/activity/${id}`, data)
+}
+
+/** 提前结束活动（已抢到的徽章保留）POST /api/admin/activity/{id}/end */
+export function endActivity(id) {
+  return request.post(`/admin/activity/${id}/end`)
+}
+
+/** 删除活动（物理删除，领取记录与徽章一并失效）DELETE /api/admin/activity/{id} */
+export function deleteActivity(id) {
+  return request.delete(`/admin/activity/${id}`)
+}

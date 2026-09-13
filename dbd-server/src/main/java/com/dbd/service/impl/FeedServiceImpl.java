@@ -10,6 +10,7 @@ import com.dbd.mapper.BarMapper;
 import com.dbd.mapper.FollowMapper;
 import com.dbd.mapper.PostMapper;
 import com.dbd.mapper.UserMapper;
+import com.dbd.service.BadgeService;
 import com.dbd.service.FeedService;
 import com.dbd.utils.RedisKeyConstants;
 import com.dbd.utils.UserContext;
@@ -47,15 +48,18 @@ public class FeedServiceImpl implements FeedService {
     private final UserMapper userMapper;
     private final BarMapper barMapper;
     private final StringRedisTemplate stringRedisTemplate;
+    private final BadgeService badgeService;
 
     public FeedServiceImpl(FollowMapper followMapper, PostMapper postMapper,
                            UserMapper userMapper, BarMapper barMapper,
-                           StringRedisTemplate stringRedisTemplate) {
+                           StringRedisTemplate stringRedisTemplate,
+                           BadgeService badgeService) {
         this.followMapper = followMapper;
         this.postMapper = postMapper;
         this.userMapper = userMapper;
         this.barMapper = barMapper;
         this.stringRedisTemplate = stringRedisTemplate;
+        this.badgeService = badgeService;
     }
 
     /* ==================== 时间线查询 ==================== */
@@ -189,6 +193,8 @@ public class FeedServiceImpl implements FeedService {
             }
             list.add(PostVO.from(post, userMap.get(post.getUserId()), barNameMap.get(post.getBarId())));
         }
+        // 关注流里同一作者可能连续出现多条，徽章批量查一次即可（内部按用户缓存）
+        badgeService.fillPostAuthors(list);
         return list;
     }
 

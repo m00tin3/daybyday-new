@@ -411,22 +411,78 @@
 
 ---
 
-### 3.6 秒杀模块 `activity`（对应前端 `src/api/activity.js`）
+### 3.6 秒杀 / 限量徽章模块 `activity`（对应前端 `src/api/activity.js`）
 
-#### 3.6.1 活动详情
+> **限量徽章**：`activity.type = 2` 的活动即为限量徽章抢夺。一个称号对应一个活动，
+> 抢到后 `UserVO.badges` 会带上称号，展示在个人主页徽章墙与帖子/楼层的作者昵称旁。
+> 徽章的发布入口在管理后台（见 §3.9.9）。
+
+#### 3.6.1 活动列表（活动广场）
+`GET /api/activity`
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| type | Integer | 否 | 1 抢楼 / 2 限量徽章；不传表示不限 |
+| page | Integer | 否 | 默认 1 |
+| size | Integer | 否 | 默认 12，上限 50 |
+
+- 成功：分页结构（ActivityVO），按开始时间倒序
+- Redis：**一次 MGET** 批量取所有活动的剩余库存与「当前用户是否已抢」，
+  不在循环里逐个 GET（一页 12 条活动 = 12 次 Redis 往返）
+
+#### 3.6.2 活动详情
 `GET /api/activity/{id}`
 - 成功：`{ "code": 1, "data": { ActivityVO } }`
 - Redis：`dbd:seckill:stock:{id}` 剩余库存实时读取
 
-#### 3.6.2 抢楼/领取徽章 🔒
+**ActivityVO 字段**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id / barId | String | 标识类 Long，序列化为字符串防 JS 精度丢失 |
+| title | String | 活动标题（新建时自动为「限量徽章：{称号}」） |
+| type | Integer | 1 抢楼 2 限量徽章 |
+| badgeName | String | 徽章称号（type=2；抢楼为 null） |
+| stock | Integer | 发放总量 |
+| remainStock | Integer | 实时剩余（Redis 无值时回退为 stock） |
+| awardedCount | Integer | 已抢数量 = stock - remainStock |
+| awardDesc | String | 奖励说明 |
+| beginTime / endTime | String | `yyyy-MM-dd HH:mm:ss` |
+| status | Integer | 动态状态 0 未开始 / 1 进行中 / 2 已结束 |
+| grabbed | Boolean | 当前用户是否已抢（未登录 false） |
+
+#### 3.6.3 抢楼 / 领取徽章 🔒
 `POST /api/activity/{id}/grab`
-- 成功：`{ "code": 1, "msg": "抢楼成功", "data": { "orderId": Long, "floorNo": Integer(抢楼时返回) } }`
+- 成功：`{ "code": 1, "msg": "领取成功", "data": {
+    "orderId": "…", "badgeName": "千早樱"(徽章时), "message": "恭喜获得限量徽章「千早樱」" } }`
+  - 抢楼活动返回 `floorNo` 而非 `badgeName`
 - **实现要点（面试核心）**：
   1. Lua 原子脚本（`resources/lua/seckill.lua`）：库存判断 + `dbd:seckill:stock:{id}` 预扣 + `dbd:seckill:order:{id}:{userId}` SETNX 一人一单，单次 Redis 往返（Redis 单线程执行脚本，天然互斥，无需额外分布式锁）
   2. 成功后 `@Async` 异步写 `activity_order` 表（唯一索引 `uk_activity_user` 双保险），主流程立即返回
   3. 主流程不建表事务：Lua 通过 → 异步落库；落库失败补偿回滚（库存 +1 + 删除一人一单标记）
   4. 库存预热：`SETNX dbd:seckill:stock:{id}` 首次访问时从 DB stock 初始化；抢楼楼层号 = stock - remainStock
+  5. **徽章缓存失效时机**：订单**落库成功后**才删 `dbd:badge:user:{userId}`。
+     若在落库前就删，紧接着的读请求会把「还没有徽章」的空结果重新缓存进去
 - 失败：未开始/已结束 → 4001；售罄 → 4002；重复抢 → 4003
+
+#### 3.6.4 我的徽章墙 🔒
+`GET /api/activity/my/badges`
+- 成功：`{ "code": 1, "data": [ BadgeVO ] }`（按获得时间倒序；未登录 → 2003）
+- BadgeVO：`{ activityId, badgeName, title, awardDesc, awardedAt }`
+
+#### 3.6.5 指定用户的徽章墙（公开）
+`GET /api/activity/user/{userId}/badges`
+- 成功：同上；用于他人主页。**「我的」与「他人的」分开两个接口**，
+  避免把当前登录用户硬编码进 URL 造成越权读取
+
+**徽章展示链路（性能要点）**
+
+| 环节 | 做法 |
+|---|---|
+| 数据来源 | `activity_order JOIN activity`（`type=2` 且 `badge_name` 非空），**不单独建徽章表**，避免双写不一致 |
+| 批量查询 | `selectBadgesByUserIds` 一次 `IN` 查完一页帖子的所有作者，杜绝 N+1 |
+| 缓存 | `dbd:badge:user:{userId}` → BadgeVO 数组 JSON，TTL 10 分钟，**空数组也缓存**（多数用户无徽章，不缓存空值会次次击穿 DB） |
+| 一致性 | Cache-Aside：领取成功落库后删除 key；删除活动时对全部领取人一并失效 |
+| 详情页 | 徽章在 `fillRequestState`（缓存命中/未命中都会走）里覆盖，**不写进帖子详情缓存**，否则刚抢到也要等 10 分钟缓存过期才可见 |
 
 ---
 
@@ -563,6 +619,62 @@
   5. 吧自身相关：吧信息缓存、`dbd:bar:member:{id}`、热吧榜 ZSet 成员、首页列表缓存
 - 缺少第 3 步时，首页「限量徽章 / 抢楼」入口会继续指向一个所属吧已不存在的活动
 
+#### 3.9.9 活动管理列表 🔒管理员
+`GET /api/admin/activity/list`
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| keyword | String | 否 | 模糊匹配徽章称号或活动标题 |
+| status | Integer | 否 | 0 未开始 / 1 进行中 / 2 已结束 |
+| page / size | Integer | 否 | 默认 1 / 10 |
+
+- 成功：分页结构（ActivityVO，含未开始与已结束的历史活动）
+- **按时间而非 DB status 列筛选**：status 列只在创建与显式结束时写入，
+  活动自然到期不会回写，用时间判断才能与列表展示的动态状态一致
+
+#### 3.9.10 发布限量徽章活动 🔒管理员
+`POST /api/admin/activity`
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| badgeName | String | 是 | 徽章称号，1-32 字，**全局唯一** |
+| stock | Integer | 是 | 发放数量 1 ~ 100000 |
+| beginTime | String | 是 | `yyyy-MM-dd HH:mm:ss` |
+| endTime | String | 是 | 同上，必须晚于 beginTime |
+| awardDesc | String | 否 | 留空自动生成「限量 N 枚，先到先得」 |
+| barId | Long | 否 | 徽章一般是平台级荣誉，通常不挂靠某个吧 |
+
+- 成功：`{ "code": 1, "msg": "发布成功", "data": { "id": "636916059126890497" } }`
+  （id 为字符串，防 JS 精度丢失）
+- 失败：称号重复 / 时间不合法 → 2001
+- 前端预置 4 个常用称号（凤川祥 / 苏幽离 / 千早樱 / 苦来兮苦宗主）下拉可选，
+  同时允许手输新称号，因此后端**只做长度校验不做枚举白名单**，否则无法扩展
+
+#### 3.9.11 编辑限量徽章活动 🔒管理员
+`PUT /api/admin/activity/{id}`
+- 请求体同 3.9.10
+- **调整总量时保持已抢数量不变**（否则会超发）：
+  已抢 = 旧总量 − Redis 剩余；新剩余 = 新总量 − 已抢，且不小于 0。
+  例：已抢 5、总量 10 → 20，则剩余由 5 变 15；总量改 3 则剩余归 0 表示售罄
+- Redis 无库存 key（从没人抢过）时不写 Redis，交由 grab 的 `setIfAbsent` 兜底
+
+#### 3.9.12 提前结束活动 🔒管理员
+`POST /api/admin/activity/{id}/end`
+- 把 `end_time` 置为当前时间、`status` 置 2，已抢到的徽章**照常保留**（领取记录不动）
+- 幂等保护：`status=2` 或 `end_time` 已过期 → 2001「该活动已经结束了」
+  - 只看时间不够：`end_time` 是秒精度 DATETIME，写入时小数秒会被 MySQL 四舍五入，
+    刚结束的 1 秒内 `now > end_time` 可能仍不成立
+- 配合 `resolveStatus` 优先采用 `status=2`，结束后立刻不可抢、前台立刻显示「已结束」
+
+#### 3.9.13 删除活动 🔒管理员
+`DELETE /api/admin/activity/{id}`
+- 物理删除，**不可恢复**。级联清理：
+  1. `activity_order` 中该活动的全部领取记录（**先取出领取人再删**，
+     否则删完就不知道该给谁失效徽章缓存了）
+  2. `dbd:seckill:stock:{id}` 与全部 `dbd:seckill:order:{id}:*`（SCAN 匹配）
+  3. 活动主记录
+  4. 上述领取人的 `dbd:badge:user:*` 缓存 —— 不清的话最长 10 分钟内
+     已删除的徽章仍挂在作者昵称旁
+
 ---
 
 ## 4. 接口与前端 api/ 对照表
@@ -601,10 +713,18 @@
 | `admin.hideBar` | /api/admin/bar/{id}/hide | POST | 🔒管理员 |
 | `admin.restoreBar` | /api/admin/bar/{id}/restore | POST | 🔒管理员 |
 | `admin.deleteBar` | /api/admin/bar/{id} | DELETE | 🔒管理员 |
+| `admin.getAdminActivities` | /api/admin/activity/list | GET | 🔒管理员 |
+| `admin.createActivity` | /api/admin/activity | POST | 🔒管理员 |
+| `admin.updateActivity` | /api/admin/activity/{id} | PUT | 🔒管理员 |
+| `admin.endActivity` | /api/admin/activity/{id}/end | POST | 🔒管理员 |
+| `admin.deleteActivity` | /api/admin/activity/{id} | DELETE | 🔒管理员 |
 | `user.getHotPosts` | /api/rank/hot/post | GET | - |
 | `feed.getFeed` | /api/feed | GET | 🔒（特例：未登录返回 2003） |
 | `activity.getActivityInfo` | /api/activity/{id} | GET | - |
+| `activity.getActivityList` | /api/activity | GET | -（活动广场，type=2 为限量徽章） |
 | `activity.grabActivity` | /api/activity/{id}/grab | POST | 🔒 |
+| `activity.getMyBadges` | /api/activity/my/badges | GET | 🔒 |
+| `activity.getUserBadges` | /api/activity/user/{userId}/badges | GET | -（他人主页徽章墙） |
 | `activity.getHotSearch` | /api/search/hot | GET | - |
 | `activity.searchPosts` | /api/search/post | GET | - |
 | `activity.getNearbyPosts` | /api/nearby/post | GET | -（⚠️ GEO 同城已封存：接口保留、前端入口已移除） |
@@ -627,9 +747,20 @@
 | 8 | 演示数据 + 部署（nginx 已就绪） | 阶段四 | ✅ |
 | 9 | 管理后台：管理员角色 + 帖子/吧的隐藏与物理删除 + 创建贴吧 | 阶段五（`user.role` + `/api/admin/**`） | ✅ |
 | 10 | 个人资料页：查看 + 修改（昵称/签名/头像/登录账号） | 阶段五（`PUT /api/user/profile`） | ✅ |
+| 11 | 限量徽章抢夺：管理后台发布 + 活动广场 + 徽章墙 + 作者角标 | 阶段六（`activity.badge_name`） | ✅ |
 
 > 数据库建表 SQL 见 `dbd-server/src/main/resources/db/init.sql`（库名 `dbd`，9 张表 + 种子数据）。
 >
-> **存量库升级**：管理功能新增了 `user.role` 字段与帖子 `status=3`（隐藏）语义，
-> 已部署过的库需执行一次增量脚本 `dbd-server/src/main/resources/db/migration_admin.sql`
-> （非幂等，重复执行会报 Duplicate column，忽略即可）。
+> **存量库升级**：按部署时间先后执行以下增量脚本（均非幂等，
+> 重复执行报 Duplicate column / Duplicate key 忽略即可）：
+>
+> | 引入的功能 | 脚本 |
+> |---|---|
+> | 管理员角色 `user.role` + 帖子 `status=3`（隐藏） | `dbd-server/src/main/resources/db/migration_admin.sql` |
+> | 发帖城市 `post.city`（替代经纬度手输） | `dbd-server/src/main/resources/db/migration_city.sql` |
+> | 限量徽章 `activity.badge_name` + 4 个徽章活动 | `dbd-server/src/main/resources/db/migration_badge.sql` |
+>
+> ⚠️ 执行时必须带 `--default-character-set=utf8mb4`，否则中文会二次编码乱码：
+> `mysql -u root -p --default-character-set=utf8mb4 < migration_badge.sql`
+>
+> ⚠️ `migration_badge.sql` 会**删除**旧的示例活动（1001/1002）及其领取记录，执行前请备份。

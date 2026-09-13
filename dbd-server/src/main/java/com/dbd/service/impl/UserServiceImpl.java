@@ -15,6 +15,7 @@ import com.dbd.mapper.FollowMapper;
 import com.dbd.mapper.PostFavoriteMapper;
 import com.dbd.mapper.PostMapper;
 import com.dbd.mapper.UserMapper;
+import com.dbd.service.BadgeService;
 import com.dbd.service.PostService;
 import com.dbd.service.UserService;
 import com.dbd.utils.RedisIdWorker;
@@ -57,11 +58,14 @@ public class UserServiceImpl implements UserService {
     private final PostService postService;
     private final StringRedisTemplate stringRedisTemplate;
     private final RedisIdWorker redisIdWorker;
+    /** 作者/用户徽章填充（用户主页、收藏列表、资料回显） */
+    private final BadgeService badgeService;
 
     public UserServiceImpl(UserMapper userMapper, PostMapper postMapper,
                            PostFavoriteMapper postFavoriteMapper, FollowMapper followMapper,
                            BarMapper barMapper, PostService postService,
-                           StringRedisTemplate stringRedisTemplate, RedisIdWorker redisIdWorker) {
+                           StringRedisTemplate stringRedisTemplate, RedisIdWorker redisIdWorker,
+                           BadgeService badgeService) {
         this.userMapper = userMapper;
         this.postMapper = postMapper;
         this.postFavoriteMapper = postFavoriteMapper;
@@ -70,6 +74,7 @@ public class UserServiceImpl implements UserService {
         this.postService = postService;
         this.stringRedisTemplate = stringRedisTemplate;
         this.redisIdWorker = redisIdWorker;
+        this.badgeService = badgeService;
     }
 
     /* ==================== 主页信息 ==================== */
@@ -82,6 +87,8 @@ public class UserServiceImpl implements UserService {
         }
         UserProfileVO vo = new UserProfileVO();
         vo.setUser(UserVO.from(user));
+        // 用户主页要显示徽章墙，用户的 UserVO 也带上徽章称号
+        badgeService.fillAuthor(vo.getUser());
         vo.setPostCount(postMapper.selectCount(new LambdaQueryWrapper<Post>()
                 .eq(Post::getUserId, id).in(Post::getStatus, 1, 2)));
         vo.setFollowerCount(fanCount(id));
@@ -138,6 +145,7 @@ public class UserServiceImpl implements UserService {
             User author = userMap.get(post.getUserId());
             list.add(PostVO.from(post, author, barNameMap.get(post.getBarId())));
         }
+        badgeService.fillPostAuthors(list);
         return PageResult.of(list, favPage.getTotal(), page, size);
     }
 
@@ -263,7 +271,10 @@ public class UserServiceImpl implements UserService {
         }
 
         userMapper.updateById(update);
-        return UserVO.from(userMapper.selectById(userId));
+        UserVO vo = UserVO.from(userMapper.selectById(userId));
+        // 资料页要显示自己的徽章墙，回显时一并带上
+        badgeService.fillAuthor(vo);
+        return vo;
     }
 
     @Override

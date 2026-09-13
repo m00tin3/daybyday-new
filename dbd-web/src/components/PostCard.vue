@@ -1,6 +1,9 @@
 <script setup>
 // 帖子列表卡片（首页/吧页/搜索/用户页复用）
 // 入参 post：PostVO（含 author/title/content 摘要/计数/createdAt）
+// author.badges 为作者已获得的限量徽章称号（后端批量填充），可能为空数组
+import BadgePill from './BadgePill.vue'
+
 defineProps({
   post: { type: Object, required: true }
 })
@@ -10,6 +13,14 @@ function digest(content) {
   if (!content) return ''
   const text = content.replace(/<[^>]+>/g, '')
   return text.length > 90 ? text.slice(0, 90) + '…' : text
+}
+
+// 徽章多的时候列表里只展示前 2 个，其余折叠成 +N
+function shownBadges(badges) {
+  return (badges || []).slice(0, 2)
+}
+function restBadgeCount(badges) {
+  return Math.max(0, (badges || []).length - 2)
 }
 </script>
 
@@ -25,6 +36,16 @@ function digest(content) {
       <div class="post-desc">{{ digest(post.content) }}</div>
       <div class="post-meta">
         <span class="user" @click.stop="$router.push(`/user/${post.author?.id}`)">{{ post.author?.nickname }}</span>
+        <BadgePill
+          v-for="b in shownBadges(post.author?.badges)"
+          :key="b"
+          :name="b"
+          class="meta-badge"
+          @click.stop
+        />
+        <span v-if="restBadgeCount(post.author?.badges)" class="badge-more" :title="post.author.badges.slice(2).join('、')">
+          +{{ restBadgeCount(post.author?.badges) }}
+        </span>
         <span v-if="post.barName" class="bar" @click.stop="$router.push(`/bar/${post.barId}`)">@{{ post.barName }}</span>
         <span v-if="post.city" class="city" @click.stop="$router.push('/city')">🏙 {{ post.city }}</span>
         · {{ post.createdAt }} ·
@@ -51,5 +72,7 @@ function digest(content) {
 .post-meta .bar:hover { color: #4e6ef2; }
 .post-meta .city { color: #999; margin-left: 8px; }
 .post-meta .city:hover { color: #4e6ef2; }
+.post-meta .meta-badge { margin-left: 5px; }
+.post-meta .badge-more { margin-left: 4px; color: #b8860b; font-weight: bold; cursor: help; }
 .post-count { color: #4e6ef2; font-weight: bold; font-size: 13px; }
 </style>

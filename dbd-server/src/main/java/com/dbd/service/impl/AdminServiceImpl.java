@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dbd.common.BusinessException;
 import com.dbd.common.PageResult;
+import com.dbd.dto.ActivityCreateDTO;
 import com.dbd.dto.BarCreateDTO;
 import com.dbd.entity.Activity;
 import com.dbd.entity.ActivityOrder;
@@ -23,11 +24,14 @@ import com.dbd.mapper.PostFavoriteMapper;
 import com.dbd.mapper.PostLikeMapper;
 import com.dbd.mapper.PostMapper;
 import com.dbd.service.AdminService;
+import com.dbd.service.ActivityService;
+import com.dbd.service.BadgeService;
 import com.dbd.service.BarService;
 import com.dbd.service.PostService;
 import com.dbd.utils.RedisIdWorker;
 import com.dbd.utils.RedisKeyConstants;
 import com.dbd.utils.UserContext;
+import com.dbd.vo.ActivityVO;
 import com.dbd.vo.BarVO;
 import com.dbd.vo.PostRow;
 import com.dbd.vo.PostVO;
@@ -37,6 +41,9 @@ import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -59,6 +66,12 @@ public class AdminServiceImpl implements AdminService {
     /** 首页列表缓存分页上限，与 PostServiceImpl.deleteHomeListCache 保持一致 */
     private static final int HOME_LIST_CACHE_PAGES = 5;
 
+    /** 活动类型：限量徽章（管理端只发布这一种；抢楼为历史类型，保留兼容） */
+    private static final int TYPE_BADGE = 2;
+
+    /** 活动时间入参格式，与前端 el-date-picker 的 value-format 保持一致 */
+    private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
     private final PostMapper postMapper;
     private final BarMapper barMapper;
     private final CommentMapper commentMapper;
@@ -73,13 +86,18 @@ public class AdminServiceImpl implements AdminService {
     private final RedisIdWorker redisIdWorker;
     private final PostService postService;
     private final BarService barService;
+    /** 活动 VO 组装复用秒杀服务的口径（实时库存/已抢数量/是否已抢），避免前后台展示不一致 */
+    private final ActivityService activityService;
+    /** 删除活动后要让领取人的徽章缓存失效 */
+    private final BadgeService badgeService;
 
     public AdminServiceImpl(PostMapper postMapper, BarMapper barMapper, CommentMapper commentMapper,
                             PostLikeMapper postLikeMapper, PostFavoriteMapper postFavoriteMapper,
                             FollowMapper followMapper, ActivityMapper activityMapper,
                             ActivityOrderMapper activityOrderMapper,
                             StringRedisTemplate stringRedisTemplate, RedisIdWorker redisIdWorker,
-                            PostService postService, BarService barService) {
+                            PostService postService, BarService barService,
+                            ActivityService activityService, BadgeService badgeService) {
         this.postMapper = postMapper;
         this.barMapper = barMapper;
         this.commentMapper = commentMapper;
@@ -92,6 +110,8 @@ public class AdminServiceImpl implements AdminService {
         this.redisIdWorker = redisIdWorker;
         this.postService = postService;
         this.barService = barService;
+        this.activityService = activityService;
+        this.badgeService = badgeService;
     }
 
     /* ==================== 帖子管理 ==================== */
@@ -103,6 +123,8 @@ public class AdminServiceImpl implements AdminService {
         // 管理端查询不限制 status，可看到隐藏(3)与精华(2)
         IPage<PostRow> rows = postMapper.selectAdminPostPage(new Page<>(page, size), keyword, status);
         List<PostVO> list = rows.getRecords().stream().map(PostVO::fromRow).toList();
+        // 管理端列表同样显示作者徽章，口径与前台一致
+        badgeService.fillPostAuthors(list);
         return PageResult.of(list, rows.getTotal(), page, size);
     }
 
@@ -276,12 +298,21 @@ public class AdminServiceImpl implements AdminService {
      * 所属吧已不存在的活动。</p>
      */
     private void purgeActivity(Long activityId) {
+        // 先记下领取人：订单删掉之后就查不到该给谁失效徽章缓存了
+        List<Long> awardedUsers = activityOrderMapper.selectList(
+                        new LambdaQueryWrapper<ActivityOrder>()
+                                .select(ActivityOrder::getUserId)
+                                .eq(ActivityOrder::getActivityId, activityId))
+                .stream().map(ActivityOrder::getUserId).distinct().toList();
+
         activityOrderMapper.delete(new LambdaQueryWrapper<ActivityOrder>()
                 .eq(ActivityOrder::getActivityId, activityId));
         stringRedisTemplate.delete(RedisKeyConstants.SECKILL_STOCK + activityId);
         // 一人一单标记按用户分散：dbd:seckill:order:{activityId}:{userId}
         removeKeysByPattern(RedisKeyConstants.SECKILL_ORDER + activityId + ":*");
         activityMapper.deleteById(activityId);
+        // 徽章随活动一起消失，缓存不清的话最长 10 分钟内作者昵称旁还挂着它
+        awardedUsers.forEach(badgeService::evict);
     }
 
     /**
@@ -299,6 +330,191 @@ public class AdminServiceImpl implements AdminService {
         if (!keys.isEmpty()) {
             stringRedisTemplate.delete(keys);
         }
+    }
+
+    /* ==================== 限量徽章活动管理 ==================== */
+
+    @Override
+    public PageResult<ActivityVO> activityList(String keyword, Integer status, Integer page, Integer size) {
+        page = normalizePage(page);
+        size = normalizeSize(size);
+        LambdaQueryWrapper<Activity> qw = new LambdaQueryWrapper<>();
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            qw.and(w -> w.like(Activity::getBadgeName, kw).or().like(Activity::getTitle, kw));
+        }
+        applyStatusFilter(qw, status);
+        qw.orderByDesc(Activity::getBeginTime).orderByDesc(Activity::getId);
+        IPage<Activity> rows = activityMapper.selectPage(new Page<>(page, size), qw);
+        // 复用秒杀服务的 VO 口径：实时剩余库存 / 已抢数量 / 是否已抢
+        return PageResult.of(activityService.toVOList(rows.getRecords()), rows.getTotal(), page, size);
+    }
+
+    /**
+     * 按<b>时间</b>而非 DB status 列筛选：status 列只在创建/结束时写入，
+     * 活动自然到期不会回写，用时间判断才能与列表展示的动态状态一致
+     * （否则会出现"筛进行中却筛不出来"）。
+     */
+    private void applyStatusFilter(LambdaQueryWrapper<Activity> qw, Integer status) {
+        if (status == null) {
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (status == 0) {
+            qw.gt(Activity::getBeginTime, now);
+        } else if (status == 1) {
+            qw.le(Activity::getBeginTime, now).ge(Activity::getEndTime, now);
+        } else if (status == 2) {
+            qw.lt(Activity::getEndTime, now);
+        } else {
+            throw BusinessException.param("状态取值不合法");
+        }
+    }
+
+    @Override
+    public Long createActivity(ActivityCreateDTO dto) {
+        String badgeName = dto.getBadgeName().trim();
+        LocalDateTime begin = parseTime(dto.getBeginTime(), "开始时间");
+        LocalDateTime end = parseTime(dto.getEndTime(), "结束时间");
+        if (!begin.isBefore(end)) {
+            throw BusinessException.param("结束时间必须晚于开始时间");
+        }
+        requireBadgeNameAvailable(badgeName, null);
+
+        Activity activity = new Activity();
+        activity.setId(redisIdWorker.nextId("activity"));
+        activity.setBarId(dto.getBarId());
+        activity.setTitle("限量徽章：" + badgeName);
+        activity.setType(TYPE_BADGE);
+        activity.setBadgeName(badgeName);
+        activity.setStock(dto.getStock());
+        activity.setAwardDesc(resolveAwardDesc(dto.getAwardDesc(), dto.getStock()));
+        activity.setBeginTime(begin);
+        activity.setEndTime(end);
+        activity.setStatus(begin.isAfter(LocalDateTime.now()) ? 0 : 1);
+        activityMapper.insert(activity);
+        // 不预热 Redis 库存：detail/list 在 key 不存在时会回退成 DB 总量（等价于"一个没抢"），
+        // grab 里也有 setIfAbsent 兜底。少一次写就少一处不一致。
+        log.info("管理员发布限量徽章 activityId={}, badgeName={}, stock={}, {} ~ {}",
+                activity.getId(), badgeName, activity.getStock(), begin, end);
+        return activity.getId();
+    }
+
+    @Override
+    public void updateActivity(Long activityId, ActivityCreateDTO dto) {
+        Activity old = requireActivity(activityId);
+        String badgeName = dto.getBadgeName().trim();
+        LocalDateTime begin = parseTime(dto.getBeginTime(), "开始时间");
+        LocalDateTime end = parseTime(dto.getEndTime(), "结束时间");
+        if (!begin.isBefore(end)) {
+            throw BusinessException.param("结束时间必须晚于开始时间");
+        }
+        requireBadgeNameAvailable(badgeName, activityId);
+
+        // 必须在改 DB 之前调整 Redis 库存：syncRedisStock 需要旧的总量来推算已抢数量
+        syncRedisStock(activityId, old.getStock(), dto.getStock());
+
+        Activity update = new Activity();
+        update.setId(activityId);
+        update.setBarId(dto.getBarId());
+        update.setTitle("限量徽章：" + badgeName);
+        update.setBadgeName(badgeName);
+        update.setStock(dto.getStock());
+        update.setAwardDesc(resolveAwardDesc(dto.getAwardDesc(), dto.getStock()));
+        update.setBeginTime(begin);
+        update.setEndTime(end);
+        update.setStatus(begin.isAfter(LocalDateTime.now()) ? 0 : 1);
+        activityMapper.updateById(update);
+        log.info("管理员编辑限量徽章 activityId={}, badgeName={}, stock={}(原 {})",
+                activityId, badgeName, dto.getStock(), old.getStock());
+    }
+
+    /**
+     * 修改总量时同步 Redis 剩余库存，保持<b>已抢数量不变</b>。
+     *
+     * <p>若直接覆盖成新总量，已经抢走的份数会凭空变回可抢（超发）；
+     * 若调低到低于已抢数量，则置 0 表示售罄——不能为负，否则 Lua 里
+     * {@code stock <= 0} 判断仍会拒绝，但数值含义就错了。</p>
+     */
+    private void syncRedisStock(Long activityId, Integer oldStock, int newStock) {
+        String key = RedisKeyConstants.SECKILL_STOCK + activityId;
+        // key 不存在 = 从没人抢过（grab 里 setIfAbsent 才会创建），无需处理
+        if (!Boolean.TRUE.equals(stringRedisTemplate.hasKey(key))) {
+            return;
+        }
+        String remainStr = stringRedisTemplate.opsForValue().get(key);
+        int remain = remainStr == null ? (oldStock == null ? 0 : oldStock) : Integer.parseInt(remainStr);
+        int awarded = Math.max(0, (oldStock == null ? 0 : oldStock) - remain);
+        int newRemain = Math.max(0, newStock - awarded);
+        stringRedisTemplate.opsForValue().set(key, String.valueOf(newRemain));
+        log.info("活动 {} 总量 {} → {}，已抢 {}，Redis 剩余库存同步为 {}",
+                activityId, oldStock, newStock, awarded, newRemain);
+    }
+
+    @Override
+    public void deleteActivity(Long activityId) {
+        Activity activity = requireActivity(activityId);
+        Long awarded = activityOrderMapper.selectCount(new LambdaQueryWrapper<ActivityOrder>()
+                .eq(ActivityOrder::getActivityId, activityId));
+        purgeActivity(activityId);
+        log.warn("管理员物理删除活动 activityId={}, badgeName={}, 已发放 {} 枚，领取记录与徽章同步失效",
+                activityId, activity.getBadgeName(), awarded);
+    }
+
+    @Override
+    public void endActivity(Long activityId) {
+        Activity activity = requireActivity(activityId);
+        LocalDateTime now = LocalDateTime.now();
+        // 双重判定：status=2 覆盖「刚刚结束、end_time 还在当前秒内」的情况
+        //（DATETIME 是秒精度，写入时小数秒会被四舍五入，直接比时间会有最多 1 秒的窗口）；
+        // end_time 已过期则覆盖「自然到期但 status 仍为 1」的情况——此时若继续把
+        // end_time 改成 now，等于把已结束的活动重新拉回进行中。
+        if ((activity.getStatus() != null && activity.getStatus() == 2)
+                || (activity.getEndTime() != null && activity.getEndTime().isBefore(now))) {
+            throw BusinessException.param("该活动已经结束了");
+        }
+        Activity update = new Activity();
+        update.setId(activityId);
+        // 不改 end_time 之外的字段：已抢到的人徽章照常保留（领取记录不动）
+        update.setEndTime(now);
+        update.setStatus(2);
+        activityMapper.updateById(update);
+        log.info("管理员提前结束活动 activityId={}, badgeName={}", activityId, activity.getBadgeName());
+    }
+
+    /** 称号全局唯一（DB uk_badge_name 兜底）；编辑时排除自己 */
+    private void requireBadgeNameAvailable(String badgeName, Long excludeId) {
+        Long count = activityMapper.selectCount(new LambdaQueryWrapper<Activity>()
+                .eq(Activity::getBadgeName, badgeName)
+                .ne(excludeId != null, Activity::getId, excludeId));
+        if (count != null && count > 0) {
+            throw BusinessException.param("已存在同名徽章活动：" + badgeName);
+        }
+    }
+
+    /** 奖励说明留空时给一句默认文案，避免前台展示空行 */
+    private String resolveAwardDesc(String input, int stock) {
+        if (input != null && !input.isBlank()) {
+            return input.trim();
+        }
+        return stock == 1 ? "全站唯一，仅此一枚" : "限量 " + stock + " 枚，先到先得";
+    }
+
+    /** 兼容前端可能传来的 ISO 形式（2026-09-12T20:00:00） */
+    private LocalDateTime parseTime(String text, String field) {
+        try {
+            return LocalDateTime.parse(text.trim().replace('T', ' '), TIME_FMT);
+        } catch (DateTimeParseException e) {
+            throw BusinessException.param(field + "格式不正确，应为 yyyy-MM-dd HH:mm:ss");
+        }
+    }
+
+    private Activity requireActivity(Long activityId) {
+        Activity activity = activityMapper.selectById(activityId);
+        if (activity == null) {
+            throw BusinessException.notFound("活动不存在");
+        }
+        return activity;
     }
 
     /* ==================== 工具 ==================== */

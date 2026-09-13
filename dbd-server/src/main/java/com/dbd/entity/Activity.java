@@ -26,6 +26,9 @@ public class Activity {
     /** 类型 1抢楼 2限量徽章 */
     private Integer type;
 
+    /** 限量徽章称号（type=2 时使用，如「凤川祥」；抢楼活动为 null） */
+    private String badgeName;
+
     /** 总库存（徽章数量 / 楼层上限） */
     private Integer stock;
 

@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS `activity` (
   `bar_id`      BIGINT      DEFAULT NULL COMMENT '关联吧ID（抢楼活动所在吧）',
   `title`       VARCHAR(64) NOT NULL COMMENT '活动标题',
   `type`        TINYINT     NOT NULL COMMENT '类型 1抢楼 2限量徽章',
+  `badge_name`  VARCHAR(32) DEFAULT NULL COMMENT '限量徽章称号（type=2 时使用）',
   `stock`       INT         NOT NULL COMMENT '库存（徽章数量/楼层上限）',
   `award_desc`  VARCHAR(255) DEFAULT NULL COMMENT '奖励描述',
   `begin_time`  DATETIME    NOT NULL COMMENT '开始时间',
@@ -145,6 +146,7 @@ CREATE TABLE IF NOT EXISTS `activity` (
   `created_at`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_badge_name` (`badge_name`) COMMENT '一个称号同时只能有一个活动',
   KEY `idx_time` (`begin_time`, `end_time`)
 ) ENGINE=InnoDB COMMENT='秒杀活动';
 
@@ -281,10 +283,13 @@ INSERT IGNORE INTO `follow` (`id`, `user_id`, `follow_user_id`, `follow_bar_id`,
   (4012, 9006, NULL, 4, 2, DATE_SUB(NOW(), INTERVAL 18 DAY)),
   (4013, 9006, 9003, NULL, 1, DATE_SUB(NOW(), INTERVAL 6 DAY));
 
--- 秒杀活动（时间窗口相对初始化时刻；1001 徽章 / 1002 抢楼）
-INSERT IGNORE INTO `activity` (`id`, `bar_id`, `title`, `type`, `stock`, `award_desc`, `begin_time`, `end_time`, `status`) VALUES
-  (1001, 1, '猫咪吧 3 周年限量徽章', 2, 100, '「猫奴认证」专属徽章', DATE_SUB(NOW(), INTERVAL 1 DAY), DATE_ADD(NOW(), INTERVAL 2 DAY), 1),
-  (1002, 2, '新版本攻略抢楼活动',   1, 300, '抢到 8 楼/88 楼/888 楼送皮肤', DATE_SUB(NOW(), INTERVAL 1 DAY), DATE_ADD(NOW(), INTERVAL 3 DAY), 1);
+-- 限量徽章抢夺活动（type=2；时间窗口相对初始化时刻，库存按稀缺度递进）
+-- bar_id 为 NULL：徽章是平台级荣誉，不挂在某个吧下。
+INSERT IGNORE INTO `activity` (`id`, `bar_id`, `title`, `type`, `badge_name`, `stock`, `award_desc`, `begin_time`, `end_time`, `status`) VALUES
+  (1003, NULL, '限量徽章：苦来兮苦宗主', 2, '苦来兮苦宗主',  1, '全站唯一，仅此一枚',  DATE_SUB(NOW(), INTERVAL 1 HOUR), DATE_ADD(NOW(), INTERVAL 7 DAY), 1),
+  (1004, NULL, '限量徽章：凤川祥',       2, '凤川祥',        3, '限量 3 枚，先到先得',  DATE_SUB(NOW(), INTERVAL 1 HOUR), DATE_ADD(NOW(), INTERVAL 7 DAY), 1),
+  (1005, NULL, '限量徽章：苏幽离',       2, '苏幽离',        5, '限量 5 枚，先到先得',  DATE_SUB(NOW(), INTERVAL 1 HOUR), DATE_ADD(NOW(), INTERVAL 7 DAY), 1),
+  (1006, NULL, '限量徽章：千早樱',       2, '千早樱',       10, '限量 10 枚，先到先得', DATE_SUB(NOW(), INTERVAL 1 HOUR), DATE_ADD(NOW(), INTERVAL 7 DAY), 1);
 
 -- ============================================================
 -- 校验（可选执行）

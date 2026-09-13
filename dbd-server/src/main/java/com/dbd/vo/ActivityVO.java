@@ -23,9 +23,15 @@ public class ActivityVO {
 
     private String title;
     private Integer type;
+
+    /** 限量徽章称号（type=2；抢楼活动为 null） */
+    private String badgeName;
+
     private Integer stock;
     /** 剩余库存（Redis 实时，计数类保持数字） */
     private Integer remainStock;
+    /** 已抢数量 = stock - remainStock（计数类） */
+    private Integer awardedCount;
     private String awardDesc;
     private String beginTime;
     private String endTime;
@@ -41,6 +47,7 @@ public class ActivityVO {
         vo.setBarId(a.getBarId());
         vo.setTitle(a.getTitle());
         vo.setType(a.getType());
+        vo.setBadgeName(a.getBadgeName());
         vo.setStock(a.getStock());
         vo.setAwardDesc(a.getAwardDesc());
         vo.setBeginTime(a.getBeginTime() == null ? null : a.getBeginTime().format(FMT));
