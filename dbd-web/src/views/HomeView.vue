@@ -28,32 +28,28 @@ async function loadBadges() {
   } catch { badges.value = [] }
 }
 
-// mock 数据：仅在后端不可用时兜底展示
-const mockPosts = [
-  { id: 1, avatar: '🐱', tag: '热', title: '家人们谁懂啊，我家猫今天居然学会开门了！', desc: '早上起来发现门开了一条缝，监控一看这货凌晨三点自己跳起来把门把手压下去了……', user: '铲屎官小王', time: '10分钟前', count: 256 },
-  { id: 2, avatar: '🎮', tag: '精', title: '【攻略】新版本全职业强度排行榜（个人向）', desc: '更新后玩了三天，法师依旧T0，刺客崛起，战士下水道实锤。楼下附详细配装。', user: '游戏老玩家', time: '1小时前', count: 1892 },
-  { id: 3, avatar: '🍜', title: '深夜放毒：学校门口那家兰州拉面倒闭了，我好难过', desc: '吃了四年的店，老板说儿子考上公务员接他去大城市享福了。祝老板一切顺利！', user: '干饭魂', time: '3小时前', count: 87 },
-  { id: 4, avatar: '📚', title: '考研倒计时150天，开个打卡帖互相监督', desc: '每天早7晚11，图书馆一楼靠窗位置。想一起的留个言，我们组个队互相卷。', user: '上岸人', time: '5小时前', count: 143 },
-  { id: 5, avatar: '🚗', title: '第一辆车怎么选？10万预算求推荐', desc: '刚工作两年，预算十万出头，主要上下班通勤+周末自驾游，油车电车都行，求老哥们给点建议。', user: '新手上路', time: '6小时前', count: 321 }
-]
-
-const mockBars = [
-  { id: 1, name: '猫咪吧', emoji: '🐱', memberCount: '128万', color: '#4e6ef2' },
-  { id: 2, name: '游戏攻略吧', emoji: '🎮', memberCount: '96万', color: '#f40' },
-  { id: 3, name: '考研上岸吧', emoji: '📚', memberCount: '73万', color: '#2db55d' },
-  { id: 4, name: '汽车之家吧', emoji: '🚗', memberCount: '52万', color: '#ff8f1f' }
-]
-
 const barColors = ['#4e6ef2', '#f40', '#2db55d', '#ff8f1f']
+
+/**
+ * 加载失败状态。
+ *
+ * <p>原实现在接口失败时回退到一段硬编码的假帖子（「铲屎官小王」等），这里刻意
+ * 不再兜底：假数据的字段名还与 PostCard 期望的对不上，渲染出来是 5 张空白卡片，
+ * 用户既看不到真实内容、也意识不到后端已经挂了，比直接报错更糟。</p>
+ */
+const loadError = ref(false)
 
 async function load() {
   loading.value = true
+  loadError.value = false
   try {
     const res = await getPostList({ page: page.value, size })
     posts.value = res.data?.list ?? []
     total.value = res.data?.total ?? 0
   } catch {
-    posts.value = mockPosts
+    posts.value = []
+    total.value = 0
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -62,10 +58,16 @@ async function load() {
 async function loadBars() {
   try {
     const res = await getBarRank()
-    bars.value = res.data ?? mockBars
+    bars.value = res.data ?? []
   } catch {
-    bars.value = mockBars
+    bars.value = []
   }
+}
+
+function retry() {
+  load()
+  loadBars()
+  loadBadges()
 }
 
 load()
@@ -87,7 +89,10 @@ loadBadges()
         :current-page="page"
         @current-change="(p) => { page = p; load() }"
       />
-      <el-empty v-if="!loading && posts.length === 0" description="还没有帖子，快去发第一帖吧" />
+      <el-empty v-if="loadError" description="帖子加载失败，请稍后重试">
+        <el-button type="primary" @click="retry">重新加载</el-button>
+      </el-empty>
+      <el-empty v-else-if="!loading && posts.length === 0" description="还没有帖子，快去发第一帖吧" />
     </section>
 
     <aside class="sidebar">
@@ -98,6 +103,7 @@ loadBadges()
           <a>{{ b.name }}</a>
           <span class="members">{{ b.memberCount }}</span>
         </div>
+        <p v-if="!bars.length" class="side-empty">暂无贴吧</p>
       </div>
       <div class="side-card">
         <h3>发现</h3>
