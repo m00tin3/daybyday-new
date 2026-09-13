@@ -21,10 +21,14 @@ public class PostVO {
     @JsonSerialize(using = ToStringSerializer.class)
     private Long id;
 
-    /** 所属吧ID：同样为标识类字段，需序列化为字符串 */
+    /** 所属吧ID：同样为标识类字段，需序列化为字符串；公告为 null */
     @JsonSerialize(using = ToStringSerializer.class)
     private Long barId;
 
+    /** 类型 0普通帖 1公告（前端据此渲染「公告」角标，优先级高于「顶」/「精」） */
+    private Integer type;
+
+    /** 吧名称；公告为 null，前端 v-if 会自动不渲染 */
     private String barName;
     private UserVO author;
     private String title;
@@ -61,6 +65,7 @@ public class PostVO {
         PostVO vo = new PostVO();
         vo.setId(row.getId());
         vo.setBarId(row.getBarId());
+        vo.setType(row.getType());
         vo.setBarName(row.getBarName());
         UserVO author = new UserVO();
         author.setId(row.getUserId());
@@ -85,6 +90,7 @@ public class PostVO {
         PostVO vo = new PostVO();
         vo.setId(post.getId());
         vo.setBarId(post.getBarId());
+        vo.setType(post.getType());
         vo.setBarName(barName);
         vo.setAuthor(UserVO.from(author));
         vo.setTitle(post.getTitle());

@@ -5,17 +5,19 @@
 
     <!-- 帖子列表：联表补全吧名/作者，置顶优先 → 最后回复时间倒序 -->
     <select id="selectPostPage" resultType="com.dbd.vo.PostRow">
-        SELECT p.id, p.bar_id, p.user_id, p.title, p.content, p.city, p.is_top, p.status,
+        SELECT p.id, p.bar_id, p.type, p.user_id, p.title, p.content, p.city, p.is_top, p.status,
                p.like_count, p.favorite_count, p.comment_count, p.view_count,
                p.created_at, p.last_comment_time,
                b.name AS bar_name,
                u.nickname AS author_nickname, u.icon AS author_icon
         FROM post p
-        JOIN bar b ON p.bar_id = b.id
+        <!-- 公告的 bar_id 为 NULL，必须用左连接，否则会被内连接静默丢弃（公告从首页消失） -->
+        LEFT JOIN bar b ON p.bar_id = b.id
         JOIN `user` u ON p.user_id = u.id
         WHERE p.status IN (1, 2)
-          <!-- 吧被隐藏/删除时其下帖子一并不可见，与 PostServiceImpl.buildDetail 的判定保持一致 -->
-          AND b.status = 1
+          <!-- 吧被隐藏/删除时其下帖子一并不可见，与 PostServiceImpl.buildDetail 的判定保持一致；
+               公告（bar_id IS NULL）不属于任何吧，不受吧状态影响 -->
+          AND (p.bar_id IS NULL OR b.status = 1)
         <if test="barId != null">
             AND p.bar_id = #{barId}
         </if>
@@ -28,7 +30,8 @@
         <if test="keyword != null and keyword != ''">
             AND (p.title LIKE CONCAT('%', #{keyword}, '%') OR p.content LIKE CONCAT('%', #{keyword}, '%'))
         </if>
-        ORDER BY p.is_top DESC, p.last_comment_time DESC, p.created_at DESC
+        <!-- 排序：公告(type=1) 永远在最前，其次是置顶帖，再按最后回复/创建时间倒序 -->
+        ORDER BY p.type DESC, p.is_top DESC, p.last_comment_time DESC, p.created_at DESC
     </select>
 
     <!--
@@ -37,17 +40,21 @@
       因此 status=3（隐藏）与 status=0（已删除）天然不会出现在前台。
     -->
     <select id="selectAdminPostPage" resultType="com.dbd.vo.PostRow">
-        SELECT p.id, p.bar_id, p.user_id, p.title, p.content, p.city, p.is_top, p.status,
+        SELECT p.id, p.bar_id, p.type, p.user_id, p.title, p.content, p.city, p.is_top, p.status,
                p.like_count, p.favorite_count, p.comment_count, p.view_count,
                p.created_at, p.last_comment_time,
                b.name AS bar_name,
                u.nickname AS author_nickname, u.icon AS author_icon
         FROM post p
-        JOIN bar b ON p.bar_id = b.id
+        <!-- 左连接：公告的 bar_id 为 NULL，内连接会让管理员看不到自己发布的公告 -->
+        LEFT JOIN bar b ON p.bar_id = b.id
         JOIN `user` u ON p.user_id = u.id
         <where>
             <if test="status != null">
                 AND p.status = #{status}
+            </if>
+            <if test="type != null">
+                AND p.type = #{type}
             </if>
             <if test="keyword != null and keyword != ''">
                 AND (p.title LIKE CONCAT('%', #{keyword}, '%') OR p.content LIKE CONCAT('%', #{keyword}, '%'))

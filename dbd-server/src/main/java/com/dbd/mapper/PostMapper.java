@@ -27,10 +27,13 @@ public interface PostMapper extends BaseMapper<Post> {
     /**
      * 管理后台帖子列表：**不限制 status**（可查 1正常 / 2精华 / 3隐藏），
      * 与前台 {@link #selectPostPage}（固定 WHERE status IN (1,2)）区分开。
+     *
+     * @param type 帖子类型过滤（0 普通帖 / 1 公告），传 null 表示不限 —— 公告管理页用它筛出公告
      */
     IPage<PostRow> selectAdminPostPage(Page<Post> page,
                                        @Param("keyword") String keyword,
-                                       @Param("status") Integer status);
+                                       @Param("status") Integer status,
+                                       @Param("type") Integer type);
 
     /**
      * 按城市浏览：统计有可见帖子的城市及其帖子数（降序）。

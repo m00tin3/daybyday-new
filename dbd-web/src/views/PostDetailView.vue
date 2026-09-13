@@ -42,10 +42,15 @@ async function loadComments() {
   }
 }
 
+// 未登录时的统一去向：带上当前路径，登录后回跳本页
+function goLogin() {
+  router.push({ name: 'login', query: { redirect: route.fullPath } })
+}
+
 // 点赞/收藏：幂等切换，接口返回最新状态
 async function toggleLike() {
   if (!userStore.token) {
-    router.push({ name: 'login', query: { redirect: route.fullPath } })
+    goLogin()
     return
   }
   try {
@@ -57,7 +62,7 @@ async function toggleLike() {
 
 async function toggleFavorite() {
   if (!userStore.token) {
-    router.push({ name: 'login', query: { redirect: route.fullPath } })
+    goLogin()
     return
   }
   try {
@@ -74,7 +79,7 @@ async function submitComment() {
     return
   }
   if (!userStore.token) {
-    router.push({ name: 'login', query: { redirect: route.fullPath } })
+    goLogin()
     return
   }
   submitting.value = true
@@ -104,15 +109,21 @@ onMounted(() => {
           <div class="avatar">{{ post.author?.icon || '👤' }}</div>
           <div class="head-meta">
             <div class="title">
-              <span v-if="post.isTop" class="tag">顶</span>
+              <!-- 公告的 is_top 恒为 1，必须排在「顶」之前判断 -->
+              <span v-if="post.type === 1" class="tag notice">公告</span>
+              <span v-else-if="post.isTop" class="tag">顶</span>
               <span v-else-if="post.status === 2" class="tag jing">精</span>
               {{ post.title }}
             </div>
             <div class="sub">
               <span class="user" @click="$router.push(`/user/${post.author?.id}`)">{{ post.author?.nickname }}</span>
               <BadgePill v-for="b in post.author?.badges || []" :key="b" :name="b" class="inline-badge" />
-              ·
-              <span class="bar" @click="$router.push(`/bar/${post.barId}`)">{{ post.barName }}</span>
+              <!-- 公告没有所属吧，barName 为 null：这里必须加 v-if，
+                   否则会渲染出一个空白但可点击的 span，点进去是 /bar/null 报「吧不存在」 -->
+              <template v-if="post.barName">
+                ·
+                <span class="bar" @click="$router.push(`/bar/${post.barId}`)">{{ post.barName }}</span>
+              </template>
               <template v-if="post.city">
                 ·
                 <span class="city" @click="$router.push('/city')">🏙 {{ post.city }}</span>
@@ -167,7 +178,7 @@ onMounted(() => {
       />
       <el-empty v-if="comments.length === 0" description="还没有回复，来抢沙发" />
 
-      <!-- 回帖 -->
+      <!-- 回帖：未登录时整块禁用，点击跳登录页 -->
       <div class="reply-box">
         <el-input
           v-model="commentText"
@@ -175,11 +186,16 @@ onMounted(() => {
           :rows="3"
           maxlength="2048"
           show-word-limit
-          placeholder="文明回帖，一起盖楼～"
+          :disabled="!userStore.token"
+          :placeholder="userStore.token ? '文明回帖，一起盖楼～' : '非登录用户无法点击和输入'"
         />
         <div class="reply-actions">
-          <el-button type="primary" :loading="submitting" @click="submitComment">回帖</el-button>
+          <el-button type="primary" :disabled="!userStore.token" :loading="submitting" @click="submitComment">
+            回帖
+          </el-button>
         </div>
+        <!-- 禁用态的 el-input 不派发 click 事件，所以用一层透明遮罩承接点击 -->
+        <div v-if="!userStore.token" class="reply-mask" @click="goLogin"></div>
       </div>
     </div>
   </div>
@@ -194,6 +210,8 @@ onMounted(() => {
 .title { font-size: 18px; font-weight: bold; margin-bottom: 6px; }
 .title .tag { font-size: 12px; color: #fff; background: #f40; border-radius: 3px; padding: 1px 5px; margin-right: 6px; }
 .title .tag.jing { background: #2db55d; }
+/* 公告：官方口径，用深红与「顶」的橙红区分开 */
+.title .tag.notice { background: #b91c1c; }
 .sub { font-size: 12px; color: #999; }
 .sub .user { color: #4e6ef2; cursor: pointer; }
 .sub .bar { cursor: pointer; }
@@ -218,6 +236,8 @@ onMounted(() => {
 .inline-badge { margin-left: 5px; }
 .floor-content { font-size: 14px; line-height: 1.6; word-break: break-word; }
 .pager { padding: 12px 0; justify-content: center; }
-.reply-box { margin-top: 16px; }
+.reply-box { margin-top: 16px; position: relative; }
 .reply-actions { text-align: right; margin-top: 8px; }
+/* 未登录遮罩：禁用态的 el-input 不派发 click，只能靠这层透明层承接「点击跳登录」 */
+.reply-mask { position: absolute; inset: 0; cursor: pointer; }
 </style>

@@ -5,7 +5,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  getAdminPosts, hidePost, restorePost, deletePost,
+  getAdminPosts, hidePost, restorePost, deletePost, topPost, untopPost, createNotice,
   getAdminBars, createBar, hideBar, restoreBar, deleteBar,
   getAdminActivities, createActivity, updateActivity, endActivity, deleteActivity
 } from '../api/admin'
@@ -29,6 +29,12 @@ const POST_STATUS = {
   1: { text: '正常', type: 'success' },
   2: { text: '精华', type: 'warning' },
   3: { text: '已隐藏', type: 'info' }
+}
+
+/** 帖子类型映射（与后端 Post.TYPE_* 一致；公告不挂吧、恒置顶） */
+const POST_TYPE = {
+  0: { text: '普通帖', type: 'info' },
+  1: { text: '公告', type: 'danger' }
 }
 
 /* ==================== 帖子管理 ==================== */
@@ -75,6 +81,23 @@ async function onRestorePost(row) {
   try {
     await restorePost(row.id)
     ElMessage.success('已恢复')
+    loadPosts()
+  } catch { /* 拦截器已提示 */ }
+}
+
+// 置顶是全站生效的，可以置顶任何人的帖子（改 post.is_top）
+async function onTopPost(row) {
+  try {
+    await topPost(row.id)
+    ElMessage.success('已置顶，首页立刻生效')
+    loadPosts()
+  } catch { /* 拦截器已提示 */ }
+}
+
+async function onUntopPost(row) {
+  try {
+    await untopPost(row.id)
+    ElMessage.success('已取消置顶')
     loadPosts()
   } catch { /* 拦截器已提示 */ }
 }
@@ -328,8 +351,98 @@ function statusType(s) {
   return POST_STATUS[s]?.type ?? 'info'
 }
 
+function typeText(t) {
+  return POST_TYPE[t ?? 0]?.text ?? '普通帖'
+}
+
+/* ==================== 公告管理 ==================== */
+
+// 公告本身是帖子（type=1、不挂吧、恒置顶），所以列表直接复用帖子管理接口，
+// 只是固定带上 type=1 —— 不再单独开一套 /admin/notice/list
+const noticeQuery = reactive({ keyword: '', page: 1, size: 10 })
+const noticeList = ref([])
+const noticeTotal = ref(0)
+const noticeLoading = ref(false)
+
+async function loadNotices() {
+  noticeLoading.value = true
+  try {
+    const res = await getAdminPosts({ ...noticeQuery, type: 1 })
+    noticeList.value = res.data?.list ?? []
+    noticeTotal.value = res.data?.total ?? 0
+  } catch {
+    noticeList.value = []
+    noticeTotal.value = 0
+  } finally {
+    noticeLoading.value = false
+  }
+}
+
+function searchNotices() {
+  noticeQuery.page = 1
+  loadNotices()
+}
+
+function resetNoticeQuery() {
+  noticeQuery.keyword = ''
+  searchNotices()
+}
+
+const noticeVisible = ref(false)
+const noticeSaving = ref(false)
+const noticeForm = reactive({ title: '', content: '' })
+
+function openCreateNotice() {
+  noticeForm.title = ''
+  noticeForm.content = ''
+  noticeVisible.value = true
+}
+
+async function submitNotice() {
+  if (!noticeForm.title.trim()) {
+    ElMessage.warning('请填写公告标题')
+    return
+  }
+  if (!noticeForm.content.trim()) {
+    ElMessage.warning('请填写公告内容')
+    return
+  }
+  noticeSaving.value = true
+  try {
+    await createNotice({
+      title: noticeForm.title.trim(),
+      content: noticeForm.content.trim()
+    })
+    ElMessage.success('公告已发布，已置顶到首页最前')
+    noticeVisible.value = false
+    searchNotices()
+  } catch { /* 拦截器已提示 */ } finally {
+    noticeSaving.value = false
+  }
+}
+
+/** 公告删除后两个列表都可能受影响（公告也在帖子列表里），一起刷新 */
+async function onDeleteNotice(row) {
+  const before = noticeList.value.length
+  try {
+    await ElMessageBox.confirm(
+      `确定物理删除公告「${row.title}」？\n该操作会连同其楼层、点赞、收藏一并删除，且不可恢复。`,
+      '危险操作确认',
+      { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch { return } // 用户取消
+  try {
+    await deletePost(row.id)
+    ElMessage.success('已删除')
+    if (before === 1 && noticeQuery.page > 1) noticeQuery.page--
+    loadNotices()
+    loadPosts()
+  } catch { /* 拦截器已提示 */ }
+}
+
 onMounted(() => {
   loadPosts()
+  loadNotices()
   loadBars()
   loadActivities()
 })
@@ -361,7 +474,15 @@ onMounted(() => {
         <el-table :data="postList" v-loading="postLoading" border stripe size="small">
           <el-table-column prop="id" label="ID" width="90" />
           <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
-          <el-table-column prop="barName" label="所属吧" width="120" show-overflow-tooltip />
+          <el-table-column label="类型" width="80" align="center">
+            <template #default="{ row }">
+              <el-tag :type="POST_TYPE[row.type ?? 0]?.type" size="small">{{ typeText(row.type) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="所属吧" width="120" show-overflow-tooltip>
+            <!-- 公告不挂吧，barName 为空 -->
+            <template #default="{ row }">{{ row.barName || '—' }}</template>
+          </el-table-column>
           <el-table-column label="作者" width="120" show-overflow-tooltip>
             <template #default="{ row }">{{ row.author?.nickname }}</template>
           </el-table-column>
@@ -371,10 +492,12 @@ onMounted(() => {
             </template>
           </el-table-column>
           <el-table-column prop="createdAt" label="创建时间" width="160" />
-          <el-table-column label="操作" width="210" fixed="right">
+          <el-table-column label="操作" width="260" fixed="right">
             <template #default="{ row }">
               <el-button v-if="row.status !== 3" link type="warning" size="small" @click="onHidePost(row)">隐藏</el-button>
               <el-button v-else link type="success" size="small" @click="onRestorePost(row)">恢复</el-button>
+              <el-button v-if="!row.isTop" link type="primary" size="small" @click="onTopPost(row)">置顶</el-button>
+              <el-button v-else link type="info" size="small" @click="onUntopPost(row)">取消置顶</el-button>
               <el-button link type="primary" size="small" @click="$router.push(`/post/${row.id}`)">查看</el-button>
               <el-button link type="danger" size="small" @click="onDeletePost(row)">删除</el-button>
             </template>
@@ -384,6 +507,38 @@ onMounted(() => {
         <el-pagination class="pager" background layout="total, prev, pager, next"
                        :total="postTotal" :current-page="postQuery.page" :page-size="postQuery.size"
                        @current-change="(p) => { postQuery.page = p; loadPosts() }" />
+      </el-tab-pane>
+
+      <!-- ==================== 公告管理 ==================== -->
+      <el-tab-pane label="公告管理" name="notice">
+        <div class="toolbar">
+          <el-input v-model="noticeQuery.keyword" placeholder="搜索公告标题或正文" clearable style="width: 240px"
+                    @keyup.enter="searchNotices" />
+          <el-button type="primary" @click="searchNotices">查询</el-button>
+          <el-button @click="resetNoticeQuery">重置</el-button>
+          <el-button type="success" class="create-btn" @click="openCreateNotice">+ 发布公告</el-button>
+        </div>
+
+        <el-table :data="noticeList" v-loading="noticeLoading" border stripe size="small">
+          <el-table-column prop="id" label="ID" width="90" />
+          <el-table-column prop="title" label="标题" min-width="240" show-overflow-tooltip />
+          <el-table-column label="状态" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag :type="statusType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="createdAt" label="发布时间" width="160" />
+          <el-table-column label="操作" width="140" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" @click="$router.push(`/post/${row.id}`)">查看</el-button>
+              <el-button link type="danger" size="small" @click="onDeleteNotice(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-pagination class="pager" background layout="total, prev, pager, next"
+                       :total="noticeTotal" :current-page="noticeQuery.page" :page-size="noticeQuery.size"
+                       @current-change="(p) => { noticeQuery.page = p; loadNotices() }" />
       </el-tab-pane>
 
       <!-- ==================== 吧管理 ==================== -->
@@ -573,6 +728,26 @@ onMounted(() => {
         <el-button type="primary" :loading="actSaving" @click="submitActivity">
           {{ actEditingId ? '保存' : '发布' }}
         </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 发布公告：公告就是一条不挂吧、恒定置顶的帖子 -->
+    <el-dialog v-model="noticeVisible" title="发布公告" width="560px">
+      <el-form label-width="80px">
+        <el-form-item label="标题" required>
+          <el-input v-model="noticeForm.title" maxlength="64" show-word-limit placeholder="如：关于社区规范的公告" />
+        </el-form-item>
+        <el-form-item label="内容" required>
+          <el-input v-model="noticeForm.content" type="textarea" :rows="6" maxlength="50000"
+                    placeholder="公告正文" />
+        </el-form-item>
+      </el-form>
+      <p class="field-tip">
+        公告发布后会立即置顶在首页列表最前，所有人都能看到；点击可进入详情页正常回复。
+      </p>
+      <template #footer>
+        <el-button @click="noticeVisible = false">取消</el-button>
+        <el-button type="primary" :loading="noticeSaving" @click="submitNotice">发布</el-button>
       </template>
     </el-dialog>
   </div>

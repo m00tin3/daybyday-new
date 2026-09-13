@@ -7,6 +7,7 @@ import com.dbd.common.BusinessException;
 import com.dbd.common.PageResult;
 import com.dbd.dto.ActivityCreateDTO;
 import com.dbd.dto.BarCreateDTO;
+import com.dbd.dto.NoticeCreateDTO;
 import com.dbd.entity.Activity;
 import com.dbd.entity.ActivityOrder;
 import com.dbd.entity.Bar;
@@ -117,11 +118,11 @@ public class AdminServiceImpl implements AdminService {
     /* ==================== 帖子管理 ==================== */
 
     @Override
-    public PageResult<PostVO> postList(String keyword, Integer status, Integer page, Integer size) {
+    public PageResult<PostVO> postList(String keyword, Integer status, Integer type, Integer page, Integer size) {
         page = normalizePage(page);
         size = normalizeSize(size);
-        // 管理端查询不限制 status，可看到隐藏(3)与精华(2)
-        IPage<PostRow> rows = postMapper.selectAdminPostPage(new Page<>(page, size), keyword, status);
+        // 管理端查询不限制 status，可看到隐藏(3)与精华(2)；type 用于公告管理页筛出公告
+        IPage<PostRow> rows = postMapper.selectAdminPostPage(new Page<>(page, size), keyword, status, type);
         List<PostVO> list = rows.getRecords().stream().map(PostVO::fromRow).toList();
         // 管理端列表同样显示作者徽章，口径与前台一致
         badgeService.fillPostAuthors(list);
@@ -162,6 +163,40 @@ public class AdminServiceImpl implements AdminService {
         // 3) 清 Redis 残留（缓存 + 计数 + 各类索引）
         purgePostRedis(postId);
         log.warn("管理员物理删除帖子 postId={}, title={}", postId, post.getTitle());
+    }
+
+    @Override
+    public void topPost(Long postId) {
+        Post post = requirePost(postId);
+        if (post.getIsTop() != null && post.getIsTop() == 1) {
+            throw BusinessException.param("该帖子已处于置顶状态");
+        }
+        updatePostTop(postId, 1);
+        // 首页列表缓存存的是整份 PostVO（含 isTop），且列表按 is_top 排序：
+        // 不失效的话最长 60 秒内首页顺序不变、详情页「顶」标签也不更新
+        postService.evictPostCache(postId);
+        log.info("管理员置顶帖子 postId={}, title={}", postId, post.getTitle());
+    }
+
+    @Override
+    public void untopPost(Long postId) {
+        Post post = requirePost(postId);
+        if (post.getIsTop() == null || post.getIsTop() != 1) {
+            throw BusinessException.param("该帖子当前不是置顶状态");
+        }
+        updatePostTop(postId, 0);
+        postService.evictPostCache(postId);
+        log.info("管理员取消置顶帖子 postId={}, title={}", postId, post.getTitle());
+    }
+
+    /* ==================== 公告 ==================== */
+
+    @Override
+    public Long publishNotice(NoticeCreateDTO dto) {
+        // 帖子创建（全局 ID、Feed 扩散、首页/城市缓存失效）统一由 PostService 负责
+        Long id = postService.publishNotice(dto);
+        log.info("管理员发布公告 postId={}, title={}", id, dto.getTitle());
+        return id;
     }
 
     /* ==================== 吧管理 ==================== */
@@ -544,6 +579,14 @@ public class AdminServiceImpl implements AdminService {
         Post update = new Post();
         update.setId(postId);
         update.setStatus(status);
+        postMapper.updateById(update);
+    }
+
+    /** 只更新 is_top 字段，理由同 {@link #updatePostStatus} */
+    private void updatePostTop(Long postId, int isTop) {
+        Post update = new Post();
+        update.setId(postId);
+        update.setIsTop(isTop);
         postMapper.updateById(update);
     }
 

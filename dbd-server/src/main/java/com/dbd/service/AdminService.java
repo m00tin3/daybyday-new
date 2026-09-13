@@ -3,6 +3,7 @@ package com.dbd.service;
 import com.dbd.common.PageResult;
 import com.dbd.dto.ActivityCreateDTO;
 import com.dbd.dto.BarCreateDTO;
+import com.dbd.dto.NoticeCreateDTO;
 import com.dbd.vo.ActivityVO;
 import com.dbd.vo.BarVO;
 import com.dbd.vo.PostVO;
@@ -20,8 +21,12 @@ public interface AdminService {
 
     /* ---------- 帖子 ---------- */
 
-    /** 帖子管理列表：包含隐藏/精华等全部状态（前台列表只返回 1/2） */
-    PageResult<PostVO> postList(String keyword, Integer status, Integer page, Integer size);
+    /**
+     * 帖子管理列表：包含隐藏/精华等全部状态（前台列表只返回 1/2）。
+     *
+     * @param type 类型过滤 0普通帖 1公告；null 表示不限
+     */
+    PageResult<PostVO> postList(String keyword, Integer status, Integer type, Integer page, Integer size);
 
     /** 隐藏帖子：status → 3，前台详情/列表/排行/Feed 均不可见 */
     void hidePost(Long postId);
@@ -31,6 +36,25 @@ public interface AdminService {
 
     /** 物理删除帖子：连同楼层、点赞、收藏一并清理，并清除 Redis 缓存与计数 key */
     void deletePost(Long postId);
+
+    /** 置顶帖子（全站生效，可置顶任何人的帖子）：is_top → 1，并失效首页列表缓存 */
+    void topPost(Long postId);
+
+    /** 取消置顶：is_top → 0 */
+    void untopPost(Long postId);
+
+    /* ---------- 公告 ---------- */
+
+    /**
+     * 发布官方公告。
+     *
+     * <p>公告本身是一条帖子（{@code type=1}、{@code bar_id=NULL}、{@code is_top=1}），
+     * 因此复用详情/回复/点赞/缓存/Feed 的全部链路，只是不挂任何吧。
+     * 发布后自动排在全站列表最前（列表 SQL 按 {@code type DESC, is_top DESC} 排序）。</p>
+     *
+     * @return 新公告的帖子 ID
+     */
+    Long publishNotice(NoticeCreateDTO dto);
 
     /* ---------- 吧 ---------- */
 

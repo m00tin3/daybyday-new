@@ -29,7 +29,9 @@ function restBadgeCount(badges) {
     <div class="post-avatar">{{ post.author?.icon || '👤' }}</div>
     <div class="post-main">
       <div class="post-title">
-        <span v-if="post.isTop" class="tag">顶</span>
+        <!-- 公告的 is_top 恒为 1，必须排在「顶」之前判断，否则永远显示成置顶帖 -->
+        <span v-if="post.type === 1" class="tag notice">公告</span>
+        <span v-else-if="post.isTop" class="tag">顶</span>
         <span v-else-if="post.status === 2" class="tag jing">精</span>
         {{ post.title }}
       </div>
@@ -64,6 +66,8 @@ function restBadgeCount(badges) {
 .post-title { font-size: 15px; font-weight: bold; color: #333; margin-bottom: 6px; }
 .post-title .tag { font-size: 12px; color: #fff; background: #f40; border-radius: 3px; padding: 1px 5px; margin-right: 6px; font-weight: normal; }
 .post-title .tag.jing { background: #2db55d; }
+/* 公告：官方口径，用深红与「顶」的橙红区分开 */
+.post-title .tag.notice { background: #b91c1c; }
 .post-desc { font-size: 13px; color: #999; margin-bottom: 8px; line-height: 1.5; overflow: hidden; }
 .post-meta { font-size: 12px; color: #aaa; }
 .post-meta .user { color: #4e6ef2; }

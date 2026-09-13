@@ -4,6 +4,7 @@ import com.dbd.common.PageResult;
 import com.dbd.common.Result;
 import com.dbd.dto.ActivityCreateDTO;
 import com.dbd.dto.BarCreateDTO;
+import com.dbd.dto.NoticeCreateDTO;
 import com.dbd.service.AdminService;
 import com.dbd.vo.ActivityVO;
 import com.dbd.vo.BarVO;
@@ -49,9 +50,10 @@ public class AdminController {
     @GetMapping("/post/list")
     public Result<PageResult<PostVO>> postList(@RequestParam(required = false) String keyword,
                                                @RequestParam(required = false) Integer status,
+                                               @RequestParam(required = false) Integer type,
                                                @RequestParam(required = false, defaultValue = "1") Integer page,
                                                @RequestParam(required = false, defaultValue = "10") Integer size) {
-        return Result.ok(adminService.postList(keyword, status, page, size));
+        return Result.ok(adminService.postList(keyword, status, type, page, size));
     }
 
     @Operation(summary = "隐藏帖子 🔒管理员（status=3，前台全链路不可见，可恢复）")
@@ -73,6 +75,30 @@ public class AdminController {
     public Result<Void> deletePost(@PathVariable Long id) {
         adminService.deletePost(id);
         return Result.ok(null, "已删除");
+    }
+
+    @Operation(summary = "置顶帖子 🔒管理员（全站生效，可置顶他人的帖子，is_top=1）")
+    @PostMapping("/post/{id}/top")
+    public Result<Void> topPost(@PathVariable Long id) {
+        adminService.topPost(id);
+        return Result.ok(null, "已置顶");
+    }
+
+    @Operation(summary = "取消置顶 🔒管理员（is_top=0）")
+    @PostMapping("/post/{id}/untop")
+    public Result<Void> untopPost(@PathVariable Long id) {
+        adminService.untopPost(id);
+        return Result.ok(null, "已取消置顶");
+    }
+
+    /* ==================== 公告 ==================== */
+
+    @Operation(summary = "发布官方公告 🔒管理员（公告本身是一条帖子：不挂吧、恒置顶、全站可见）")
+    @PostMapping("/notice")
+    public Result<Map<String, Object>> publishNotice(@Valid @RequestBody NoticeCreateDTO dto) {
+        Long id = adminService.publishNotice(dto);
+        // id 为 18-19 位 Long，转字符串避免前端 JS 精度丢失（与发帖接口一致）
+        return Result.ok(Map.of("id", String.valueOf(id)), "公告已发布");
     }
 
     /* ==================== 吧管理 ==================== */

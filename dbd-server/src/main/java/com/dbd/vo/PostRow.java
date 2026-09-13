@@ -10,6 +10,8 @@ public class PostRow {
 
     private Long id;
     private Long barId;
+    /** 类型 0普通帖 1公告（列表页据此渲染「公告」角标） */
+    private Integer type;
     private Long userId;
     private String title;
     private String content;

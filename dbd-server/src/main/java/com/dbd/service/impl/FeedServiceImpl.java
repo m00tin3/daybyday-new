@@ -110,10 +110,14 @@ public class FeedServiceImpl implements FeedService {
         for (Follow f : userFans) {
             fanIds.add(f.getUserId());
         }
-        List<Follow> barFans = followMapper.selectList(new LambdaQueryWrapper<Follow>()
-                .eq(Follow::getFollowType, 2).eq(Follow::getFollowBarId, barId));
-        for (Follow f : barFans) {
-            fanIds.add(f.getUserId());
+        // 公告（barId 为 null）不属于任何吧，没有"吧粉丝"可推 —— 直接跳过，
+        // 否则 MyBatis-Plus 会拼出 follow_bar_id = NULL 这种恒不命中的查询
+        if (barId != null) {
+            List<Follow> barFans = followMapper.selectList(new LambdaQueryWrapper<Follow>()
+                    .eq(Follow::getFollowType, 2).eq(Follow::getFollowBarId, barId));
+            for (Follow f : barFans) {
+                fanIds.add(f.getUserId());
+            }
         }
         for (Long fanId : fanIds) {
             stringRedisTemplate.opsForZSet()
@@ -187,11 +191,13 @@ public class FeedServiceImpl implements FeedService {
             if (post == null || !Post.isVisible(post.getStatus())) {
                 continue;
             }
-            // 吧不可见（已隐藏/已删除）时同样跳过
-            if (!barNameMap.containsKey(post.getBarId())) {
+            // 吧不可见（已隐藏/已删除）时同样跳过；
+            // 公告（bar_id 为 NULL）不属于任何吧，不在 barNameMap 里，需放行而不是静默丢弃
+            if (post.getBarId() != null && !barNameMap.containsKey(post.getBarId())) {
                 continue;
             }
-            list.add(PostVO.from(post, userMap.get(post.getUserId()), barNameMap.get(post.getBarId())));
+            list.add(PostVO.from(post, userMap.get(post.getUserId()),
+                    post.getBarId() == null ? null : barNameMap.get(post.getBarId())));
         }
         // 关注流里同一作者可能连续出现多条，徽章批量查一次即可（内部按用户缓存）
         badgeService.fillPostAuthors(list);

@@ -39,12 +39,35 @@ public class Post {
         return status != null && (status == STATUS_NORMAL || status == STATUS_FEATURED);
     }
 
+    /** 类型：普通帖（发在某个吧里） */
+    public static final int TYPE_NORMAL = 0;
+
+    /**
+     * 类型：官方公告。
+     *
+     * <p>公告本身是一种帖子，复用详情/回复/点赞/缓存/Feed 的全部链路，区别只有两点：
+     * {@link #barId} 为 {@code null}（公告不属于任何吧），且发布时 {@link #isTop} 置 1。
+     * 判断统一走 {@link #isAnnouncement(Integer)}，不要散写 {@code type == 1}。</p>
+     */
+    public static final int TYPE_ANNOUNCEMENT = 1;
+
+    /**
+     * 是否官方公告。
+     * <p>可见性仍走 {@link #isVisible(Integer)} —— 公告的 status 同样是 1，不需要新状态值。</p>
+     */
+    public static boolean isAnnouncement(Integer type) {
+        return type != null && type == TYPE_ANNOUNCEMENT;
+    }
+
     /** 帖子ID（全局ID生成器） */
     @TableId
     private Long id;
 
-    /** 所属吧ID */
+    /** 所属吧ID（公告为 null） */
     private Long barId;
+
+    /** 类型 0普通帖 1公告，取值见 {@link #TYPE_NORMAL} / {@link #TYPE_ANNOUNCEMENT} */
+    private Integer type;
 
     /** 发帖人ID */
     private Long userId;

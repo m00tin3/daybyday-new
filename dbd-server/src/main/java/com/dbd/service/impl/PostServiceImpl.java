@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dbd.common.BusinessException;
 import com.dbd.common.PageResult;
 import com.dbd.dto.CommentDTO;
+import com.dbd.dto.NoticeCreateDTO;
 import com.dbd.dto.PostDTO;
 import com.dbd.entity.Bar;
 import com.dbd.entity.Comment;
@@ -233,6 +234,11 @@ public class PostServiceImpl implements PostService {
             return null;
         }
         User author = userMapper.selectById(post.getUserId());
+        // 公告（bar_id 为 NULL）不属于任何吧：跳过吧校验，barName 传 null。
+        // 不能依赖 barMapper.selectById(null) 的行为（结果随版本而变），直接短路。
+        if (post.getBarId() == null) {
+            return PostVO.from(post, author, null);
+        }
         Bar bar = barMapper.selectById(post.getBarId());
         // 吧被隐藏/删除时其下帖子一并不可见（与列表 SQL 的 b.status = 1 保持一致）
         if (bar == null || bar.getStatus() == null || bar.getStatus() != 1) {
@@ -313,6 +319,8 @@ public class PostServiceImpl implements PostService {
         // 空串统一落 NULL，避免出现 city='' 这种既不是有效城市又非空的脏值
         post.setCity(dto.getCity() == null || dto.getCity().isBlank() ? null : dto.getCity().trim());
         post.setStatus(1);
+        // 显式写类型：详情/列表都直接读实体，不能依赖 DB 的 DEFAULT 0
+        post.setType(Post.TYPE_NORMAL);
         post.setIsTop(0);
         post.setLikeCount(0);
         post.setFavoriteCount(0);
@@ -333,6 +341,45 @@ public class PostServiceImpl implements PostService {
         // Feed 写扩散：新帖推入关注该作者/该吧的粉丝时间线
         feedService.pushNewPost(post.getId(), post.getUserId(), post.getBarId(),
                 now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
+        return post.getId();
+    }
+
+    @Override
+    public Long publishNotice(NoticeCreateDTO dto) {
+        // 角色校验不在这里：调用方是 AdminService，即 /api/admin/** 路径，
+        // 已由 AdminInterceptor 强制 role=1（未登录 401 / 非管理员 403）
+        Long userId = UserContext.get();
+        Post post = new Post();
+        post.setId(redisIdWorker.nextId("post"));
+        // 公告不挂任何吧 —— 这个 NULL 就是"全站公告"的语义载体，
+        // 列表 SQL 用 LEFT JOIN + (p.bar_id IS NULL OR b.status = 1) 放行它
+        post.setBarId(null);
+        post.setType(Post.TYPE_ANNOUNCEMENT);
+        post.setUserId(userId);
+        post.setTitle(dto.getTitle());
+        post.setContent(dto.getContent());
+        post.setImages(null);
+        // 不填城市：公告是平台级内容，不应出现在"按城市浏览"里
+        post.setCity(null);
+        post.setStatus(Post.STATUS_NORMAL);
+        // 公告恒置顶，配合列表的 ORDER BY p.type DESC, p.is_top DESC 排在全站最前
+        post.setIsTop(1);
+        post.setLikeCount(0);
+        post.setFavoriteCount(0);
+        post.setCommentCount(0);
+        post.setViewCount(0);
+        post.setUvCount(0);
+        LocalDateTime now = LocalDateTime.now();
+        post.setCreatedAt(now);
+        post.setLastCommentTime(now);
+        postMapper.insert(post);
+        // 发布公告会新增一条置顶帖，首页列表缓存必须失效，否则最长 60 秒内看不到
+        deleteHomeListCache();
+        deleteCitiesCache();
+        // 关注了管理员的人能在关注流里看到公告；公告没有所属吧，barId 传 null
+        feedService.pushNewPost(post.getId(), userId, null,
+                now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
+        log.info("发布公告 postId={}, title={}", post.getId(), post.getTitle());
         return post.getId();
     }
 

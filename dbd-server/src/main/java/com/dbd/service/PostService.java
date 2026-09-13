@@ -2,6 +2,7 @@ package com.dbd.service;
 
 import com.dbd.common.PageResult;
 import com.dbd.dto.CommentDTO;
+import com.dbd.dto.NoticeCreateDTO;
 import com.dbd.dto.PostDTO;
 import com.dbd.vo.CityStatVO;
 import com.dbd.vo.CommentVO;
@@ -30,6 +31,18 @@ public interface PostService {
 
     /** 发帖：防重复提交 + 全局 ID，返回帖子ID */
     Long create(PostDTO dto);
+
+    /**
+     * 发布官方公告，返回公告对应的帖子ID。
+     *
+     * <p>公告本身是一条帖子（{@code type=1}、{@code bar_id=NULL}、{@code is_top=1}），
+     * 复用帖子详情/回复/点赞/缓存/Feed 的全部链路。与 {@link #create} 的区别：
+     * 不挂吧、不校验吧存在、恒定置顶、不填城市。</p>
+     *
+     * <p><b>权限</b>：本方法不自行判角色，调用方只应是 {@code AdminService}
+     * （即 {@code /api/admin/**}，由 AdminInterceptor 强制 role=1）。</p>
+     */
+    Long publishNotice(NoticeCreateDTO dto);
 
     /** 点赞/取消（幂等切换），返回 { isLiked, likeCount } */
     Map<String, Object> like(Long postId);

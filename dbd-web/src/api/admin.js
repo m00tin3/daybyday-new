@@ -25,6 +25,26 @@ export function deletePost(id) {
   return request.delete(`/admin/post/${id}`)
 }
 
+/** 置顶帖子（全站生效，可置顶他人的帖子）POST /api/admin/post/{id}/top */
+export function topPost(id) {
+  return request.post(`/admin/post/${id}/top`)
+}
+
+/** 取消置顶 POST /api/admin/post/{id}/untop */
+export function untopPost(id) {
+  return request.post(`/admin/post/${id}/untop`)
+}
+
+/* ---------- 公告 ---------- */
+
+/**
+ * 发布官方公告 POST /api/admin/notice
+ * 公告本身是一条帖子（type=1、不挂吧、恒置顶），发布后自动排在全站列表最前。
+ */
+export function createNotice(data) {
+  return request.post('/admin/notice', data)
+}
+
 /* ---------- 吧管理 ---------- */
 
 /** 吧管理列表（含已隐藏的吧）GET /api/admin/bar/list */

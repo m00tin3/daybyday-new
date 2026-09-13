@@ -109,14 +109,15 @@
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | id | Long | 帖子ID（**JSON 中序列化为字符串**，避免 JS 大整数精度丢失） |
-| barId | Long | 所属吧ID（同上，字符串） |
-| barName | String | 吧名称（冗余，列表展示） |
+| barId | Long | 所属吧ID（同上，字符串）；**公告为 `null`** |
+| type | Integer | 0 普通帖 / 1 官方公告 |
+| barName | String | 吧名称（冗余，列表展示）；**公告为 `null`**（前端 `v-if` 不渲染） |
 | author | UserVO | 作者（含 id/nickname/icon） |
 | title | String | 标题 |
 | content | String | 正文（列表接口只返回截断摘要，详情接口返回全文） |
 | images | String[] | 图片 URL 列表 |
 | city | String | 城市（发帖时手动填写，用于「按城市浏览」；可空） |
-| isTop | Boolean | 是否置顶 |
+| isTop | Boolean | 是否置顶（公告恒为 `true`） |
 | status | Integer | 1 正常 0 删除 2 精华 3 隐藏 |
 | likeCount / favoriteCount / commentCount / viewCount | Long | 计数（Redis，**JSON 中保持数字**） |
 | uvCount | Long | 独立访客数（HyperLogLog，可选展示） |
@@ -415,7 +416,7 @@
 
 > **限量徽章**：`activity.type = 2` 的活动即为限量徽章抢夺。一个称号对应一个活动，
 > 抢到后 `UserVO.badges` 会带上称号，展示在个人主页徽章墙与帖子/楼层的作者昵称旁。
-> 徽章的发布入口在管理后台（见 §3.9.9）。
+> 徽章的发布入口在管理后台（见 §3.9.11）。
 
 #### 3.6.1 活动列表（活动广场）
 `GET /api/activity`
@@ -557,10 +558,12 @@
 |---|---|---|---|
 | keyword | String | 否 | 匹配标题或正文 |
 | status | Integer | 否 | 1 正常 / 2 精华 / 3 隐藏 / 0 已删除；不传则全部 |
+| type | Integer | 否 | 0 普通帖 / 1 公告；不传则全部（公告管理页固定传 1） |
 | page / size | Integer | 否 | 默认 1 / 10 |
 
 - 成功：分页结构（PostVO，**含隐藏等前台不可见的状态**）
 - 与前台 `/api/post/list` 的关键区别：前台 SQL 固定 `WHERE p.status IN (1,2) AND b.status = 1`
+- 公告的 `barId`/`barName` 为 `null` —— 查询用的是 `LEFT JOIN bar`，内连接会把公告整个丢掉
 
 #### 3.9.2 隐藏帖子 🔒管理员
 `POST /api/admin/post/{id}/hide`
@@ -580,7 +583,20 @@
 - 清理 Redis：`dbd:post:cache:{id}` 与 `:lock`、`dbd:post:like|favorite|floor|view|uv:{id}`、
   `dbd:geo:post`（ZREM）、`dbd:rank:hot:post`（ZREM）、全部 `dbd:feed:user:*`（**SCAN + ZREM，不用 KEYS**）、首页列表缓存
 
-#### 3.9.5 吧管理列表 🔒管理员
+#### 3.9.5 置顶帖子 🔒管理员
+`POST /api/admin/post/{id}/top`
+- 成功：`{ "code": 1, "msg": "已置顶" }`
+- 语义：`is_top → 1`，**全站生效**（首页/搜索/吧内列表都排最前）；不限制作者，可置顶任何人的帖子
+- 缓存：调用 `PostService.evictPostCache(id)`，失效详情缓存 + 首页列表缓存（**必须**，否则首页最长 60 秒才变序）
+- 已置顶 → 2001
+
+#### 3.9.6 取消置顶 🔒管理员
+`POST /api/admin/post/{id}/untop`
+- 成功：`{ "code": 1, "msg": "已取消置顶" }`
+- 语义：`is_top → 0`；缓存处理同上
+- 当前非置顶 → 2001
+
+#### 3.9.7 吧管理列表 🔒管理员
 `GET /api/admin/bar/list`
 
 | 参数 | 类型 | 必填 | 说明 |
@@ -589,7 +605,7 @@
 | status | Integer | 否 | 1 正常 / 0 已隐藏；不传则全部 |
 | page / size | Integer | 否 | 默认 1 / 10 |
 
-#### 3.9.6 创建贴吧 🔒管理员
+#### 3.9.8 创建贴吧 🔒管理员
 `POST /api/admin/bar`
 
 | 参数 | 类型 | 必填 | 说明 |
@@ -602,13 +618,13 @@
 - 新吧 ID 由 Redis 全局 ID 生成器分配，`creator_id` 记录管理员，初始状态正常
 - 名称重复 → 2001「该吧名称已存在」（`bar.uk_name` 唯一索引兜底）
 
-#### 3.9.7 隐藏 / 恢复贴吧 🔒管理员
+#### 3.9.9 隐藏 / 恢复贴吧 🔒管理员
 `POST /api/admin/bar/{id}/hide` / `POST /api/admin/bar/{id}/restore`
 - `status → 0` / `status → 1`
 - 隐藏时额外：清除吧信息缓存、从热吧榜 ZSet 移除、清首页列表缓存
 - 隐藏后其下帖子在**列表 SQL（`b.status = 1`）、帖子详情、Feed 流、热帖榜**中一并不可见
 
-#### 3.9.8 删除贴吧 🔒管理员
+#### 3.9.10 删除贴吧 🔒管理员
 `DELETE /api/admin/bar/{id}`
 - 成功：`{ "code": 1, "msg": "已删除" }`
 - **完整级联清理**（避免留下任何指向已删吧的孤儿数据）：
@@ -620,7 +636,7 @@
   5. 吧自身相关：吧信息缓存、`dbd:bar:member:{id}`、热吧榜 ZSet 成员、首页列表缓存
 - 缺少第 3 步时，首页「限量徽章 / 抢楼」入口会继续指向一个所属吧已不存在的活动
 
-#### 3.9.9 活动管理列表 🔒管理员
+#### 3.9.11 活动管理列表 🔒管理员
 `GET /api/admin/activity/list`
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -632,7 +648,7 @@
 - **按时间而非 DB status 列筛选**：status 列只在创建与显式结束时写入，
   活动自然到期不会回写，用时间判断才能与列表展示的动态状态一致
 
-#### 3.9.10 发布限量徽章活动 🔒管理员
+#### 3.9.12 发布限量徽章活动 🔒管理员
 `POST /api/admin/activity`
 
 | 参数 | 类型 | 必填 | 说明 |
@@ -650,15 +666,15 @@
 - 前端预置 4 个常用称号（凤川祥 / 苏幽离 / 千早樱 / 苦来兮苦宗主）下拉可选，
   同时允许手输新称号，因此后端**只做长度校验不做枚举白名单**，否则无法扩展
 
-#### 3.9.11 编辑限量徽章活动 🔒管理员
+#### 3.9.13 编辑限量徽章活动 🔒管理员
 `PUT /api/admin/activity/{id}`
-- 请求体同 3.9.10
+- 请求体同 3.9.12
 - **调整总量时保持已抢数量不变**（否则会超发）：
   已抢 = 旧总量 − Redis 剩余；新剩余 = 新总量 − 已抢，且不小于 0。
   例：已抢 5、总量 10 → 20，则剩余由 5 变 15；总量改 3 则剩余归 0 表示售罄
 - Redis 无库存 key（从没人抢过）时不写 Redis，交由 grab 的 `setIfAbsent` 兜底
 
-#### 3.9.12 提前结束活动 🔒管理员
+#### 3.9.14 提前结束活动 🔒管理员
 `POST /api/admin/activity/{id}/end`
 - 把 `end_time` 置为当前时间、`status` 置 2，已抢到的徽章**照常保留**（领取记录不动）
 - 幂等保护：`status=2` 或 `end_time` 已过期 → 2001「该活动已经结束了」
@@ -666,7 +682,7 @@
     刚结束的 1 秒内 `now > end_time` 可能仍不成立
 - 配合 `resolveStatus` 优先采用 `status=2`，结束后立刻不可抢、前台立刻显示「已结束」
 
-#### 3.9.13 删除活动 🔒管理员
+#### 3.9.15 删除活动 🔒管理员
 `DELETE /api/admin/activity/{id}`
 - 物理删除，**不可恢复**。级联清理：
   1. `activity_order` 中该活动的全部领取记录（**先取出领取人再删**，
@@ -675,6 +691,38 @@
   3. 活动主记录
   4. 上述领取人的 `dbd:badge:user:*` 缓存 —— 不清的话最长 10 分钟内
      已删除的徽章仍挂在作者昵称旁
+
+#### 3.9.16 发布公告 🔒管理员
+`POST /api/admin/notice`
+
+请求体（`NoticeCreateDTO`）：
+
+| 字段 | 类型 | 必填 | 校验 |
+|---|---|---|---|
+| title | String | 是 | 非空，最长 64 字符 |
+| content | String | 是 | 非空，最长 50000 字符 |
+
+- 成功：`{ "code": 1, "msg": "公告已发布", "data": { "id": "<18-19 位 ID，字符串>" } }`
+
+**语义：公告本身就是一条帖子**，所以详情/回复/点赞/搜索/Feed/缓存全部复用帖子链路，区别只有三点：
+
+1. `type = 1`（普通帖为 0）—— 前端据此渲染红色「公告」角标，**优先级高于「顶」和「精」**
+   （公告的 `is_top` 恒为 1，若先判 `isTop` 就永远显示成置顶帖了）
+2. `bar_id = NULL` —— 不挂任何吧。列表 SQL 因此必须用 `LEFT JOIN bar`
+   且可见性条件写成 `(p.bar_id IS NULL OR b.status = 1)`，否则公告被内连接整个丢掉
+3. `is_top = 1` —— 恒定置顶，配合列表的 `ORDER BY p.type DESC, p.is_top DESC`
+   排在全站最前（公告压在「被置顶的普通帖」之上）
+
+其它落库值：`status=1`、`city=NULL`（不进「按城市浏览」）、
+`images=NULL`、各类计数为 0、`created_at = last_comment_time = now`。
+
+- 缓存：发布后失效首页列表缓存（5 页）与城市缓存；新公告可能落到首页第 1 页
+- 热帖榜：`rebuildHotPostRank` 显式排除 `type=1`，公告不参与热度排名
+- 不设防重锁：管理端单次点击由前端 `:loading` 兜底（与 `createBar` / `createActivity` 一致）
+
+> **为什么不用 `POST /api/post`**：那个接口的 `PostDTO.barId` 是 `@NotNull`，
+> 为了发公告而放开它，普通用户就能自己发出一条 `type=1` 的「公告」（提权）。
+> 公告只能走 `/api/admin/notice`，由 `AdminInterceptor` 强制 `role=1`。
 
 ---
 
@@ -705,10 +753,13 @@
 | `user.getSignCalendar` | /api/user/{id}/sign | GET | - |
 | `user.followUser` | /api/user/{id}/follow | POST | 🔒 |
 | `user.updateUserProfile` | /api/user/profile | PUT | 🔒（仅本人） |
-| `admin.getAdminPosts` | /api/admin/post/list | GET | 🔒管理员 |
+| `admin.getAdminPosts` | /api/admin/post/list | GET | 🔒管理员（支持 type=1 筛公告） |
 | `admin.hidePost` | /api/admin/post/{id}/hide | POST | 🔒管理员 |
 | `admin.restorePost` | /api/admin/post/{id}/restore | POST | 🔒管理员 |
 | `admin.deletePost` | /api/admin/post/{id} | DELETE | 🔒管理员 |
+| `admin.topPost` | /api/admin/post/{id}/top | POST | 🔒管理员（全站置顶，可置顶他人帖子） |
+| `admin.untopPost` | /api/admin/post/{id}/untop | POST | 🔒管理员 |
+| `admin.createNotice` | /api/admin/notice | POST | 🔒管理员（公告即帖子，不挂吧、恒置顶） |
 | `admin.getAdminBars` | /api/admin/bar/list | GET | 🔒管理员 |
 | `admin.createBar` | /api/admin/bar | POST | 🔒管理员 |
 | `admin.hideBar` | /api/admin/bar/{id}/hide | POST | 🔒管理员 |
@@ -749,6 +800,7 @@
 | 9 | 管理后台：管理员角色 + 帖子/吧的隐藏与物理删除 + 创建贴吧 | 阶段五（`user.role` + `/api/admin/**`） | ✅ |
 | 10 | 个人资料页：查看 + 修改（昵称/签名/头像/登录账号） | 阶段五（`PUT /api/user/profile`） | ✅ |
 | 11 | 限量徽章抢夺：管理后台发布 + 活动广场 + 徽章墙 + 作者角标 | 阶段六（`activity.badge_name`） | ✅ |
+| 12 | 官方公告 + 全站置顶：管理端发布公告、置顶任意帖子 | 阶段七（`post.type` + `post.bar_id` 放开 NOT NULL） | ✅ |
 
 > 数据库建表 SQL 见 `dbd-server/src/main/resources/db/init.sql`（库名 `dbd`，9 张表 + 种子数据）。
 >
@@ -760,6 +812,7 @@
 > | 管理员角色 `user.role` + 帖子 `status=3`（隐藏） | `dbd-server/src/main/resources/db/migration_admin.sql` |
 > | 发帖城市 `post.city`（替代经纬度手输） | `dbd-server/src/main/resources/db/migration_city.sql` |
 > | 限量徽章 `activity.badge_name` + 4 个徽章活动 | `dbd-server/src/main/resources/db/migration_badge.sql` |
+> | 帖子类型 `post.type` + 公告不挂吧（`post.bar_id` 放开 NOT NULL） | `dbd-server/src/main/resources/db/migration_notice.sql` |
 >
 > ⚠️ 执行时必须带 `--default-character-set=utf8mb4`，否则中文会二次编码乱码：
 > `mysql -u root -p --default-character-set=utf8mb4 < migration_badge.sql`

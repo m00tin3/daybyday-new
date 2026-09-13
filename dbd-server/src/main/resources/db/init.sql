@@ -50,7 +50,9 @@ CREATE TABLE IF NOT EXISTS `bar` (
 -- ==================== 帖子 ====================
 CREATE TABLE IF NOT EXISTS `post` (
   `id`           BIGINT       NOT NULL COMMENT '帖子ID',
-  `bar_id`       BIGINT       NOT NULL COMMENT '所属吧ID',
+  -- 公告不挂任何吧，故允许为 NULL；普通帖必然有值
+  `bar_id`       BIGINT       DEFAULT NULL COMMENT '所属吧ID（公告为 NULL）',
+  `type`         TINYINT      NOT NULL DEFAULT 0 COMMENT '类型 0普通帖 1公告',
   `user_id`      BIGINT       NOT NULL COMMENT '发帖人ID',
   `title`        VARCHAR(64)  NOT NULL COMMENT '标题',
   `content`      MEDIUMTEXT   NOT NULL COMMENT '正文',

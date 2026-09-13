@@ -92,8 +92,11 @@ public class RankServiceImpl implements RankService {
     @Scheduled(cron = "0 */5 * * * ?")
     @Override
     public void rebuildHotPostRank() {
+        // 排除公告：热帖榜反映社区自发热度，官方公告不参与排名
+        // （读侧 assemble 本来也会把公告过滤掉，这里顺手保证 ZSet 里不留无效成员）
         List<Post> posts = postMapper.selectList(new LambdaQueryWrapper<Post>()
-                .in(Post::getStatus, 1, 2));
+                .in(Post::getStatus, 1, 2)
+                .ne(Post::getType, Post.TYPE_ANNOUNCEMENT));
         for (Post post : posts) {
             Long views = getViewCount(post.getId());
             Long likes = getLikeCount(post.getId());

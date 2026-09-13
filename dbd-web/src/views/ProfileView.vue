@@ -10,6 +10,7 @@ import { getUserInfo } from '../api/auth'
 import { getUserProfile, updateUserProfile } from '../api/user'
 import { getMyBadges } from '../api/activity'
 import { useUserStore } from '../stores/user'
+import { isValidAccount, ACCOUNT_ERROR_MSG } from '../utils/validate'
 import BadgeWall from '../components/BadgeWall.vue'
 
 const router = useRouter()
@@ -37,7 +38,14 @@ const rules = {
   ],
   signText: [{ max: 128, message: '个性签名不能超过 128 字', trigger: 'blur' }],
   icon: [{ max: 255, message: '头像 URL 不能超过 255 字符', trigger: 'blur' }],
-  phone: [{ pattern: /^\d{6,20}$/, message: '账号需为 6-20 位数字', trigger: 'blur' }]
+  // 与登录页同一套规则：改成非 11 位手机号（且不在白名单里）的账号，下次就登不进来了
+  phone: [
+    {
+      validator: (_rule, value, callback) =>
+        !value || isValidAccount(value) ? callback() : callback(new Error(ACCOUNT_ERROR_MSG)),
+      trigger: 'blur'
+    }
+  ]
 }
 
 /** 头像：填的是图片地址就渲染图片，否则按文本（emoji 等）展示 */
