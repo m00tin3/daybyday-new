@@ -5,6 +5,7 @@ import com.dbd.common.Result;
 import com.dbd.dto.UpdateProfileDTO;
 import com.dbd.service.UserService;
 import com.dbd.vo.PostVO;
+import com.dbd.vo.UserReplyVO;
 import com.dbd.vo.UserProfileVO;
 import com.dbd.vo.UserVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -53,6 +54,14 @@ public class UserController {
                                             @RequestParam(required = false, defaultValue = "1") Integer page,
                                             @RequestParam(required = false, defaultValue = "10") Integer size) {
         return Result.ok(userService.posts(id, page, size));
+    }
+
+    @Operation(summary = "某人的回复（分页，所有人可见）—— 帖子被删的记录仍会返回")
+    @GetMapping("/{id}/replies")
+    public Result<PageResult<UserReplyVO>> replies(@PathVariable Long id,
+                                                   @RequestParam(required = false, defaultValue = "1") Integer page,
+                                                   @RequestParam(required = false, defaultValue = "20") Integer size) {
+        return Result.ok(userService.replies(id, page, size));
     }
 
     @Operation(summary = "我的收藏 🔒（仅本人）")

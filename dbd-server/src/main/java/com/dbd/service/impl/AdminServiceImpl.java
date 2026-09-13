@@ -132,6 +132,7 @@ public class AdminServiceImpl implements AdminService {
     @Override
     public void hidePost(Long postId) {
         Post post = requirePost(postId);
+        requireNotAuthorDeleted(post);
         if (post.getStatus() != null && post.getStatus() == Post.STATUS_HIDDEN) {
             throw BusinessException.param("该帖子已处于隐藏状态");
         }
@@ -143,12 +144,28 @@ public class AdminServiceImpl implements AdminService {
     @Override
     public void restorePost(Long postId) {
         Post post = requirePost(postId);
+        requireNotAuthorDeleted(post);
         if (post.getStatus() != null && post.getStatus() == Post.STATUS_NORMAL) {
             throw BusinessException.param("该帖子已是正常状态");
         }
         updatePostStatus(postId, Post.STATUS_NORMAL);
         postService.evictPostCache(postId);
         log.info("管理员恢复帖子 postId={}, 原状态={}", postId, post.getStatus());
+    }
+
+    /**
+     * 作者自己删掉的内容（`status=0`）不允许管理员在后台操作。
+     *
+     * <p><b>为什么必须加这道守卫</b>：只靠前端把按钮藏起来是不够的 —— 接口仍然注册着，
+     * 直接调 {@code POST /api/admin/post/{id}/hide} 再 {@code /restore} 两跳就能把作者删掉的帖子
+     * 变回正常状态。而且"隐藏"对一条已删除的帖子本身就没有意义。</p>
+     *
+     * <p>恢复这类内容只能按运维手册上服务器改 `status`（产品要求：前端不提供任何恢复手段）。</p>
+     */
+    private void requireNotAuthorDeleted(Post post) {
+        if (post.getStatus() != null && post.getStatus() == Post.STATUS_DELETED) {
+            throw BusinessException.param("该内容已被作者删除，无法在此操作");
+        }
     }
 
     @Override

@@ -452,7 +452,10 @@ onMounted(() => {
   <div class="admin-page">
     <div class="admin-head">
       <h2>管理后台</h2>
-      <p class="tip">隐藏 = 改状态、可恢复，前台立刻不可见；删除 = 物理删除，不可恢复。</p>
+      <p class="tip">
+        隐藏 = 改状态、可恢复，前台立刻不可见；删除 = 物理删除，不可恢复。
+        状态为「已删除」的内容是**作者自己删掉的**，后台不提供任何恢复操作。
+      </p>
     </div>
 
     <el-tabs v-model="tab" class="admin-tabs">
@@ -494,11 +497,16 @@ onMounted(() => {
           <el-table-column prop="createdAt" label="创建时间" width="160" />
           <el-table-column label="操作" width="260" fixed="right">
             <template #default="{ row }">
-              <el-button v-if="row.status !== 3" link type="warning" size="small" @click="onHidePost(row)">隐藏</el-button>
-              <el-button v-else link type="success" size="small" @click="onRestorePost(row)">恢复</el-button>
-              <el-button v-if="!row.isTop" link type="primary" size="small" @click="onTopPost(row)">置顶</el-button>
-              <el-button v-else link type="info" size="small" @click="onUntopPost(row)">取消置顶</el-button>
-              <el-button link type="primary" size="small" @click="$router.push(`/post/${row.id}`)">查看</el-button>
+              <!-- 作者自己删掉的内容（status=0）只显示「删除」：
+                   置顶/查看对一条已不可见的帖子没有意义（查看会 404），
+                   隐藏→恢复更是会把作者删掉的帖子变回来。恢复只能上服务器改 status。 -->
+              <template v-if="row.status !== 0">
+                <el-button v-if="row.status === 1 || row.status === 2" link type="warning" size="small" @click="onHidePost(row)">隐藏</el-button>
+                <el-button v-else-if="row.status === 3" link type="success" size="small" @click="onRestorePost(row)">恢复</el-button>
+                <el-button v-if="!row.isTop" link type="primary" size="small" @click="onTopPost(row)">置顶</el-button>
+                <el-button v-else link type="info" size="small" @click="onUntopPost(row)">取消置顶</el-button>
+                <el-button link type="primary" size="small" @click="$router.push(`/post/${row.id}`)">查看</el-button>
+              </template>
               <el-button link type="danger" size="small" @click="onDeletePost(row)">删除</el-button>
             </template>
           </el-table-column>

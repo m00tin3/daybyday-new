@@ -67,8 +67,10 @@ onMounted(async () => {
             <span class="dot" v-if="!n.isRead"></span>
             <span class="time">{{ n.createdAt }}</span>
           </div>
-          <div class="post-title" :class="{ gone: !n.postTitle }">
-            {{ n.postTitle || '帖子已删除' }}
+          <!-- 判断"帖子没了"必须用 postDeleted 而不是 postTitle 是否为空：
+               帖子被作者软删后行还在、标题照样查得到 -->
+          <div class="post-title" :class="{ gone: n.postDeleted }">
+            {{ n.postDeleted ? '帖子已删除' : n.postTitle }}
           </div>
           <div class="snippet" v-if="n.contentSnippet">{{ n.contentSnippet }}</div>
         </div>

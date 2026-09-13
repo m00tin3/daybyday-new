@@ -55,6 +55,11 @@ function restBadgeCount(badges) {
         <span class="post-count" style="margin-left: 10px">👍 {{ post.likeCount }}</span>
       </div>
     </div>
+    <!-- 操作区插槽：目前只有个人主页用它塞「删除」按钮，其他使用处不传则宽度为 0，不影响布局。
+         外层统一 @click.stop —— 卡片根节点绑了跳详情，不挡住的话点删除会同时跳走。 -->
+    <div class="post-actions" @click.stop>
+      <slot name="actions" />
+    </div>
   </div>
 </template>
 
@@ -79,4 +84,6 @@ function restBadgeCount(badges) {
 .post-meta .meta-badge { margin-left: 5px; }
 .post-meta .badge-more { margin-left: 4px; color: #b8860b; font-weight: bold; cursor: help; }
 .post-count { color: #4e6ef2; font-weight: bold; font-size: 13px; }
+/* 操作区：不传插槽时为空、宽度为 0，对首页/吧页等其他使用处零影响 */
+.post-actions { display: flex; align-items: center; margin-left: 12px; flex-shrink: 0; }
 </style>

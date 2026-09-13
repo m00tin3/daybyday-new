@@ -1,6 +1,7 @@
 package com.dbd.vo;
 
 import com.dbd.entity.Notification;
+import com.dbd.entity.Post;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.Data;
@@ -32,8 +33,15 @@ public class NotificationVO {
     @JsonSerialize(using = ToStringSerializer.class)
     private Long postId;
 
-    /** 帖子标题；**帖子已被删除时为 null**，前端显示「帖子已删除」而不是让整条通知消失 */
+    /** 帖子标题（帖子被软删时**仍有值**，所以不能靠它判断"帖子没了"） */
     private String postTitle;
+
+    /**
+     * 所属帖子是否已不可见（作者软删 / 管理员隐藏 / 被物理删除）。
+     * <p>前端据此显示「帖子已删除」—— 只看 `postTitle` 是否为空会判断失败：
+     * 软删除后帖子行还在，标题照常查得到。</p>
+     */
+    private Boolean postDeleted;
 
     /** 相关楼层ID（点赞类为 null） */
     @JsonSerialize(using = ToStringSerializer.class)
@@ -60,6 +68,8 @@ public class NotificationVO {
         vo.setFromUser(from);
         vo.setPostId(row.getPostId());
         vo.setPostTitle(row.getPostTitle());
+        // 帖子被物理删除时 postStatus 为 null → 同样按"已不可见"处理
+        vo.setPostDeleted(!Post.isVisible(row.getPostStatus()));
         vo.setCommentId(row.getCommentId());
         vo.setContentSnippet(row.getCommentSnippet());
         vo.setIsRead(row.getIsRead() != null && row.getIsRead() == 1);

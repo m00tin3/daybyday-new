@@ -17,6 +17,9 @@
         SELECT n.id, n.type, n.from_user_id, n.post_id, n.comment_id, n.is_read, n.created_at,
                u.nickname AS from_nickname, u.icon AS from_icon,
                p.title    AS post_title,
+               -- 必须带出帖子状态：帖子被作者**软删除**后行还在、post_title 永远有值，
+               -- 光靠"标题为空"判断不出"帖子已删"，通知里会把已删帖的真实标题显示出来
+               p.status   AS post_status,
                LEFT(c.content, 60) AS comment_snippet
         FROM notification n
         LEFT JOIN `user` u    ON u.id = n.from_user_id

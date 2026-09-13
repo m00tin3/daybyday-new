@@ -4,6 +4,7 @@ import com.dbd.common.PageResult;
 import com.dbd.dto.UpdateProfileDTO;
 import com.dbd.vo.PostVO;
 import com.dbd.vo.UserProfileVO;
+import com.dbd.vo.UserReplyVO;
 import com.dbd.vo.UserVO;
 
 import java.util.Map;
@@ -18,6 +19,12 @@ public interface UserService {
 
     /** 用户帖子（分页，复用帖子模块） */
     PageResult<PostVO> posts(Long id, Integer page, Integer size);
+
+    /**
+     * 某人的回复列表（分页，所有人可见）—— 个人主页「TA 的回复」。
+     * <p>所属帖子被软删除后，该条记录**仍会返回**（前端据 {@code postDeleted} 提示"此帖已被删除"）。</p>
+     */
+    PageResult<UserReplyVO> replies(Long id, Integer page, Integer size);
 
     /** 我的收藏（仅本人可查） */
     PageResult<PostVO> favorites(Integer page, Integer size);

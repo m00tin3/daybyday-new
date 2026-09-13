@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.dbd.mapper.CommentMapper">
+
+    <!--
+      某人的回复列表（个人主页「TA 的回复」Tab）。
+
+      两个关键点：
+      1) LEFT JOIN post —— 帖子被**软删除**后行还在，能拿到标题与状态。
+         这里刻意不用 INNER JOIN：用户要求"帖子被楼主删了，回复者主页里那条仍在，
+         点进去才提示已删除"。INNER JOIN 会让这条记录直接消失。
+      2) 带出 p.status —— 前端据此决定"点击是跳转还是弹提示"。只给标题不给状态的话，
+         前端会以为帖子还在、跳过去撞 404。
+
+      过滤 c.status = 1：用户自己删掉的回复不再出现（对用户而言就是删了）。
+      排序与楼层列表一致用 created_at，同秒再按 id 兜底保证稳定分页。
+    -->
+    <select id="selectRepliesByUser" resultType="com.dbd.vo.UserReplyRow">
+        SELECT c.id, c.post_id, c.content, c.floor_no, c.parent_id, c.created_at,
+               p.title  AS post_title,
+               p.status AS post_status
+        FROM `comment` c
+        LEFT JOIN post p ON p.id = c.post_id
+        WHERE c.user_id = #{userId}
+          AND c.status = 1
+        ORDER BY c.created_at DESC, c.id DESC
+    </select>
+
+</mapper>

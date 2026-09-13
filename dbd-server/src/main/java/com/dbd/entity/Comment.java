@@ -13,6 +13,26 @@ import java.time.LocalDateTime;
 @TableName("`comment`")
 public class Comment {
 
+    /** 状态：正常（唯一对前台可见的状态） */
+    public static final int STATUS_NORMAL = 1;
+
+    /**
+     * 状态：已被作者删除（**软删除**）。
+     * <p>用户在个人主页/帖子详情里删掉自己的回复时写这个值。对用户而言就是删了，
+     * 前端不提供任何恢复入口；恢复只能管理员上服务器改 `status`。</p>
+     */
+    public static final int STATUS_DELETED = 0;
+
+    /**
+     * 该回复对前台是否可见。
+     * <p>与 {@code Post.isVisible} 同理：可见性判断统一走这里，不要在业务代码里散写 {@code status == 1}。</p>
+     * <p><b>注意</b>：楼层列表接口刻意**不**用它过滤顶层楼层 —— 已删楼层要留在列表里当占位，
+     * 这样它的子回复（需求要求保留可见）才有父节点可挂。</p>
+     */
+    public static boolean isVisible(Integer status) {
+        return status != null && status == STATUS_NORMAL;
+    }
+
     /** 楼层ID（全局ID生成器） */
     @TableId
     private Long id;

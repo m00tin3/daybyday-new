@@ -48,3 +48,13 @@ export function getFloorReplies(postId, floorId, params) {
 export function addComment(postId, data) {
   return request.post(`/post/${postId}/comment`, data)
 }
+
+/** 删除自己的帖子（软删除，仅本人；删后整帖不可见）🔒 DELETE /api/post/{id} */
+export function deleteOwnPost(id) {
+  return request.delete(`/post/${id}`)
+}
+
+/** 删除自己的回复（软删除，仅本人；楼层内的楼中楼会保留可见）🔒 DELETE /api/post/{id}/comment/{commentId} */
+export function deleteOwnComment(postId, commentId) {
+  return request.delete(`/post/${postId}/comment/${commentId}`)
+}

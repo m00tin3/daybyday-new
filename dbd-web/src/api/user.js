@@ -16,6 +16,11 @@ export function getUserPosts(id, params) {
   return request.get(`/user/${id}/posts`, { params })
 }
 
+/** 某人的回复列表（所有人可见）GET /api/user/{id}/replies */
+export function getUserReplies(id, params) {
+  return request.get(`/user/${id}/replies`, { params })
+}
+
 /** 我的收藏（仅本人）🔒 GET /api/user/favorites */
 export function getUserFavorites(params) {
   return request.get('/user/favorites', { params })

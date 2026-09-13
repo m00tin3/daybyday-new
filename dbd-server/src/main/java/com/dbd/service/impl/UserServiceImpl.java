@@ -6,11 +6,13 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dbd.common.BusinessException;
 import com.dbd.common.PageResult;
 import com.dbd.dto.UpdateProfileDTO;
+import com.dbd.entity.Comment;
 import com.dbd.entity.Follow;
 import com.dbd.entity.Post;
 import com.dbd.entity.PostFavorite;
 import com.dbd.entity.User;
 import com.dbd.mapper.BarMapper;
+import com.dbd.mapper.CommentMapper;
 import com.dbd.mapper.FollowMapper;
 import com.dbd.mapper.PostFavoriteMapper;
 import com.dbd.mapper.PostMapper;
@@ -24,6 +26,8 @@ import com.dbd.utils.RedisKeyConstants;
 import com.dbd.utils.UserContext;
 import com.dbd.vo.PostVO;
 import com.dbd.vo.UserProfileVO;
+import com.dbd.vo.UserReplyRow;
+import com.dbd.vo.UserReplyVO;
 import com.dbd.vo.UserVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.BitFieldSubCommands;
@@ -63,12 +67,15 @@ public class UserServiceImpl implements UserService {
     private final BadgeService badgeService;
     /** 点赞/收藏计数回填（DB 那两列从来没被写过，真实值在 Redis Set 里） */
     private final PostCountService postCountService;
+    /** 「TA 的回复」列表（联表查所属帖子标题与可见性） */
+    private final CommentMapper commentMapper;
 
     public UserServiceImpl(UserMapper userMapper, PostMapper postMapper,
                            PostFavoriteMapper postFavoriteMapper, FollowMapper followMapper,
                            BarMapper barMapper, PostService postService,
                            StringRedisTemplate stringRedisTemplate, RedisIdWorker redisIdWorker,
-                           BadgeService badgeService, PostCountService postCountService) {
+                           BadgeService badgeService, PostCountService postCountService,
+                           CommentMapper commentMapper) {
         this.userMapper = userMapper;
         this.postMapper = postMapper;
         this.postFavoriteMapper = postFavoriteMapper;
@@ -79,6 +86,7 @@ public class UserServiceImpl implements UserService {
         this.redisIdWorker = redisIdWorker;
         this.badgeService = badgeService;
         this.postCountService = postCountService;
+        this.commentMapper = commentMapper;
     }
 
     /* ==================== 主页信息 ==================== */
@@ -95,6 +103,11 @@ public class UserServiceImpl implements UserService {
         badgeService.fillAuthor(vo.getUser());
         vo.setPostCount(postMapper.selectCount(new LambdaQueryWrapper<Post>()
                 .eq(Post::getUserId, id).in(Post::getStatus, 1, 2)));
+        // 回复数口径：**只按 comment.status=1，不管所属帖子是否被软删** ——
+        // 与「TA 的回复」列表保持一致（列表刻意保留"帖子已被删除"的记录）。
+        // 走 idx_user_created(user_id, created_at)，单个用户一次 COUNT，不会 N+1。
+        vo.setReplyCount(commentMapper.selectCount(new LambdaQueryWrapper<Comment>()
+                .eq(Comment::getUserId, id).eq(Comment::getStatus, 1)));
         vo.setFollowerCount(fanCount(id));
         vo.setFollowingCount(followMapper.selectCount(new LambdaQueryWrapper<Follow>()
                 .eq(Follow::getUserId, id).eq(Follow::getFollowType, 1)));
@@ -107,6 +120,15 @@ public class UserServiceImpl implements UserService {
     public PageResult<PostVO> posts(Long id, Integer page, Integer size) {
         // 参数依次为 barId / userId / city / keyword
         return postService.page(null, id, null, null, page, size);
+    }
+
+    @Override
+    public PageResult<UserReplyVO> replies(Long id, Integer page, Integer size) {
+        int p = page == null || page < 1 ? 1 : page;
+        int s = size == null || size < 1 ? 20 : Math.min(size, 50);
+        IPage<UserReplyRow> rows = commentMapper.selectRepliesByUser(new Page<>(p, s), id);
+        List<UserReplyVO> list = rows.getRecords().stream().map(UserReplyVO::fromRow).toList();
+        return PageResult.of(list, rows.getTotal(), p, s);
     }
 
     /* ==================== 我的收藏 ==================== */

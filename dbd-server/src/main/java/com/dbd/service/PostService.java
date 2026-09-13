@@ -67,6 +67,25 @@ public interface PostService {
     Map<String, Object> addComment(Long postId, CommentDTO dto);
 
     /**
+     * 用户删除自己的帖子（**软删除**：`post.status → 0`，仅本人可操作）。
+     *
+     * <p>只改帖子自己的状态，**不逐条改该帖楼层的状态** —— 否则回复者
+     * 「TA 的回复」列表里的记录会一并消失（那里按 `comment.status = 1` 查）。
+     * 帖子不可见后 `requirePost` 会抛 2002，整栋楼在效果上也就到不了了。</p>
+     *
+     * <p>已删除的帖子再次调用是**幂等**的（直接返回成功，不报错）。</p>
+     */
+    void deleteOwnPost(Long postId);
+
+    /**
+     * 用户删除自己的楼层或子回复（**软删除**：`comment.status → 0`，仅本人可操作）。
+     *
+     * <p>删顶层楼层时**其楼中楼保留可见**（需求要求），所以帖子回复数只减 1。
+     * 已删除的回复再次调用是幂等的。</p>
+     */
+    void deleteOwnComment(Long postId, Long commentId);
+
+    /**
      * 清除该帖的详情缓存、重建互斥锁与首页列表缓存。
      * <p>管理端隐藏/删除帖子后必须调用，否则前台在缓存 TTL 内仍能看到旧数据。</p>
      */

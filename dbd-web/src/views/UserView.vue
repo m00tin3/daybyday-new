@@ -1,9 +1,10 @@
 <script setup>
-// 个人中心：主页信息 + 关注按钮 + 签到日历 + 帖子/收藏 Tab（对应 API.md §3.4）
+// 个人中心：主页信息 + 关注按钮 + 签到日历 + 帖子/回复/收藏 Tab（对应 API.md §3.4）
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { getUserProfile, getUserPosts, getUserFavorites, getSignCalendar, followUser } from '../api/user'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { getUserProfile, getUserPosts, getUserFavorites, getUserReplies, getSignCalendar, followUser } from '../api/user'
+import { deleteOwnPost, deleteOwnComment } from '../api/post'
 import { getUserBadges } from '../api/activity'
 import { useUserStore } from '../stores/user'
 import PostCard from '../components/PostCard.vue'
@@ -21,6 +22,12 @@ const favorites = ref([])
 const badges = ref([])
 const signInfo = ref({ signList: [], signCount: 0 })
 const loading = ref(false)
+
+// 「TA 的回复」——与另外两个 Tab 不同，这个带分页（历史发言可能很长）
+const replies = ref([])
+const replyPage = ref(1)
+const replyTotal = ref(0)
+const replySize = 20
 
 // 本月日历：42 格（6 行 × 7 列）
 const now = new Date()
@@ -72,6 +79,76 @@ async function loadFavorites() {
   } catch { favorites.value = [] }
 }
 
+async function loadReplies() {
+  try {
+    const res = await getUserReplies(userId, { page: replyPage.value, size: replySize })
+    replies.value = res.data?.list ?? []
+    replyTotal.value = res.data?.total ?? 0
+  } catch {
+    replies.value = []
+    replyTotal.value = 0
+  }
+}
+
+function changeReplyPage(p) {
+  replyPage.value = p
+  loadReplies()
+}
+
+/* ==================== 删除自己的内容 ==================== */
+
+/**
+ * 删除确认框。
+ * 产品要求"对用户伪装成真删除"，所以措辞按不可恢复写，也不提任何恢复途径。
+ */
+async function confirmDelete(text) {
+  try {
+    await ElMessageBox.confirm(text, '确认删除', {
+      type: 'warning',
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger'
+    })
+    return true
+  } catch {
+    return false // 用户取消
+  }
+}
+
+async function onDeletePost(p) {
+  if (!(await confirmDelete(`确定删除帖子「${p.title}」？删除后不可恢复。`))) return
+  try {
+    await deleteOwnPost(p.id)
+    ElMessage.success('已删除')
+    // 本地摘掉，不整表重拉（与列表分页状态无关）
+    posts.value = posts.value.filter(x => x.id !== p.id)
+    if (profile.value?.postCount > 0) profile.value.postCount--
+  } catch { /* 拦截器已提示 */ }
+}
+
+async function onDeleteReply(r) {
+  if (!(await confirmDelete('确定删除这条回复？删除后不可恢复。'))) return
+  try {
+    await deleteOwnComment(r.postId, r.id)
+    ElMessage.success('已删除')
+    replies.value = replies.value.filter(x => x.id !== r.id)
+    if (replyTotal.value > 0) replyTotal.value--
+    if (profile.value?.replyCount > 0) profile.value.replyCount--
+  } catch { /* 拦截器已提示 */ }
+}
+
+/**
+ * 点「TA 的回复」里的一条。
+ * 所属帖子已被删除时只弹提示、**不跳转** —— 跳过去只会看到 404 空页。
+ */
+function openReplyTarget(r) {
+  if (r.postDeleted) {
+    ElMessage.warning('此帖已被删除')
+    return
+  }
+  router.push(`/post/${r.postId}`)
+}
+
 async function loadSign() {
   try {
     const res = await getSignCalendar(userId)
@@ -82,6 +159,7 @@ async function loadSign() {
 function switchTab(t) {
   tab.value = t
   if (t === 'favorites' && favorites.value.length === 0) loadFavorites()
+  if (t === 'replies' && replies.value.length === 0) loadReplies()
 }
 
 async function toggleFollow() {
@@ -113,7 +191,7 @@ onMounted(load)
           <h2>{{ profile.user?.nickname }}</h2>
           <p class="sign">{{ profile.user?.signText || '这个人很懒，什么都没写' }}</p>
           <p class="counts">
-            发帖 {{ profile.postCount }} · 粉丝 {{ profile.followerCount }} · 关注 {{ profile.followingCount }}
+            发帖 {{ profile.postCount }} · 回复 {{ profile.replyCount }} · 粉丝 {{ profile.followerCount }} · 关注 {{ profile.followingCount }}
           </p>
         </div>
         <div class="actions">
@@ -129,9 +207,48 @@ onMounted(load)
         <div class="content-area">
           <el-tabs v-model="tab" @tab-change="switchTab">
             <el-tab-pane label="TA 的帖子" name="posts">
-              <PostCard v-for="p in posts" :key="p.id" :post="p" />
+              <PostCard v-for="p in posts" :key="p.id" :post="p">
+                <!-- 只有自己的主页才给删除入口 -->
+                <template v-if="isSelf" #actions>
+                  <el-button link type="danger" size="small" @click="onDeletePost(p)">删除</el-button>
+                </template>
+              </PostCard>
               <el-empty v-if="posts.length === 0" description="还没有发过帖" />
             </el-tab-pane>
+
+            <!-- 回复列表所有人可见；删除按钮只在自己的主页出现 -->
+            <el-tab-pane label="TA 的回复" name="replies">
+              <div v-for="r in replies" :key="r.id" class="reply-item" @click="openReplyTarget(r)">
+                <div class="reply-head">
+                  <span class="reply-post" :class="{ gone: r.postDeleted }">
+                    {{ r.postDeleted ? '该帖已被删除' : r.postTitle }}
+                  </span>
+                  <span class="reply-tag">{{ r.nested ? '楼中楼' : `${r.floorNo}楼` }}</span>
+                  <span class="reply-time">{{ r.createdAt }}</span>
+                </div>
+                <div class="reply-body">{{ r.content }}</div>
+                <el-button
+                  v-if="isSelf"
+                  link
+                  type="danger"
+                  size="small"
+                  class="reply-del"
+                  @click.stop="onDeleteReply(r)"
+                >删除</el-button>
+              </div>
+              <el-empty v-if="replies.length === 0" description="还没有回复过" />
+              <el-pagination
+                v-if="replyTotal > replySize"
+                class="pager"
+                background
+                layout="total, prev, pager, next"
+                :total="replyTotal"
+                :current-page="replyPage"
+                :page-size="replySize"
+                @current-change="changeReplyPage"
+              />
+            </el-tab-pane>
+
             <el-tab-pane v-if="isSelf" label="我的收藏" name="favorites">
               <PostCard v-for="p in favorites" :key="p.id" :post="p" />
               <el-empty v-if="favorites.length === 0" description="还没有收藏" />
@@ -188,4 +305,17 @@ onMounted(load)
 .day.signed { background: #4e6ef2; color: #fff; }
 .day.today { outline: 1px solid #4e6ef2; }
 .day.empty { background: transparent; }
+
+/* ==================== 「TA 的回复」列表 ==================== */
+.reply-item { position: relative; padding: 12px 0; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+.reply-item:hover { background: #f7f9ff; }
+.reply-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #999; margin-bottom: 6px; }
+.reply-post { color: #4e6ef2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+/* 所属帖子已被删除：灰斜体，和正常标题区分开 */
+.reply-post.gone { color: #bbb; font-style: italic; cursor: default; }
+.reply-tag { background: #f0f2f5; color: #666; border-radius: 3px; padding: 1px 5px; flex-shrink: 0; }
+.reply-time { margin-left: auto; color: #bbb; flex-shrink: 0; }
+.reply-body { font-size: 14px; line-height: 1.6; color: #333; word-break: break-word; padding-right: 52px; }
+.reply-del { position: absolute; right: 0; bottom: 10px; }
+.pager { padding: 12px 0; justify-content: center; }
 </style>

@@ -2,8 +2,11 @@
 // 帖子详情：正文 + 点赞/收藏 + 楼层列表 + 回帖（对应 API.md §3.2.2/3.2.4-3.2.7）
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { getPostDetail, likePost, favoritePost, getComments, getFloorReplies, addComment } from '../api/post'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  getPostDetail, likePost, favoritePost, getComments, getFloorReplies, addComment,
+  deleteOwnPost, deleteOwnComment
+} from '../api/post'
 import { useUserStore } from '../stores/user'
 import BadgePill from '../components/BadgePill.vue'
 
@@ -193,6 +196,53 @@ async function submitReply(floor) {
   }
 }
 
+/* ==================== 删除自己的内容 ==================== */
+
+/** 是否是我发的。ID 由后端 ToStringSerializer 下发，两侧都是字符串，直接比即可 */
+function isMine(author) {
+  return !!userStore.userInfo && userStore.userInfo.id === author?.id
+}
+
+/** 删除确认框。产品要求"对用户伪装成真删除"，措辞按不可恢复写，也不提任何恢复途径 */
+async function confirmDelete(text) {
+  try {
+    await ElMessageBox.confirm(text, '确认删除', {
+      type: 'warning',
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger'
+    })
+    return true
+  } catch {
+    return false // 用户取消
+  }
+}
+
+async function onDeletePost() {
+  if (!(await confirmDelete(`确定删除帖子「${post.value.title}」？删除后不可恢复。`))) return
+  try {
+    await deleteOwnPost(postId)
+    ElMessage.success('已删除')
+    router.push('/')
+  } catch { /* 拦截器已提示 */ }
+}
+
+/**
+ * 删自己的楼层或子回复。
+ * @param comment 要删的那条
+ */
+async function onDeleteComment(comment) {
+  if (!(await confirmDelete('确定删除这条回复？删除后不可恢复。'))) return
+  try {
+    await deleteOwnComment(postId, comment.id)
+    ElMessage.success('已删除')
+    // 头部「全部回复（N）」要跟着减，否则同一页连删两条数字不动
+    post.value.commentCount = Math.max(0, (Number(post.value.commentCount) || 0) - 1)
+    // loadComments 会整体刷新楼层并清空各层的翻页缓存
+    await loadComments()
+  } catch { /* 拦截器已提示 */ }
+}
+
 onMounted(() => {
   loadPost()
   loadComments()
@@ -243,6 +293,8 @@ onMounted(() => {
           <el-button :type="post.isFavorited ? 'warning' : 'default'" round @click="toggleFavorite">
             ⭐ 收藏 {{ post.favoriteCount }}
           </el-button>
+          <!-- 只有自己发的帖子才给删除入口 -->
+          <el-button v-if="isMine(post.author)" round type="danger" plain @click="onDeletePost">删除</el-button>
         </div>
       </template>
       <el-empty v-else-if="!loading" description="帖子不存在或已删除">
@@ -254,16 +306,27 @@ onMounted(() => {
     <div class="comments" v-if="post">
       <h3 class="section-title">全部回复（{{ post.commentCount }}）</h3>
       <div v-for="c in comments" :key="c.id" class="floor">
-        <div class="floor-avatar">{{ c.author?.icon || '👤' }}</div>
+        <div class="floor-avatar">{{ c.deleted ? '' : (c.author?.icon || '👤') }}</div>
         <div class="floor-main">
-          <div class="floor-head">
-            <span class="floor-no">{{ c.floorNo }}楼</span>
-            <span class="user" @click="$router.push(`/user/${c.author?.id}`)">{{ c.author?.nickname }}</span>
-            <BadgePill v-for="b in c.author?.badges || []" :key="b" :name="b" class="inline-badge" />
-            <span class="time">{{ c.createdAt }}</span>
-            <span class="reply-btn" @click="openReply(c)">回复</span>
-          </div>
-          <div class="floor-content">{{ c.content }}</div>
+          <!-- 作者已删除的楼层：只留占位。内容与作者后端已经不给（脱敏），
+               但**下面的楼中楼照常渲染** —— 需求要求删楼层不隐藏别人的回复。 -->
+          <template v-if="c.deleted">
+            <div class="floor-head">
+              <span class="floor-no">{{ c.floorNo }}楼</span>
+              <span class="floor-gone">该楼层已被删除</span>
+            </div>
+          </template>
+          <template v-else>
+            <div class="floor-head">
+              <span class="floor-no">{{ c.floorNo }}楼</span>
+              <span class="user" @click="$router.push(`/user/${c.author?.id}`)">{{ c.author?.nickname }}</span>
+              <BadgePill v-for="b in c.author?.badges || []" :key="b" :name="b" class="inline-badge" />
+              <span class="time">{{ c.createdAt }}</span>
+              <span class="reply-btn" @click="openReply(c)">回复</span>
+              <span v-if="isMine(c.author)" class="reply-btn del" @click="onDeleteComment(c)">删除</span>
+            </div>
+            <div class="floor-content">{{ c.content }}</div>
+          </template>
 
           <!-- 楼中楼：第 1 页内联完整展示；超过一页时在该层内翻页（仿贴吧） -->
           <div v-if="c.replyCount > 0" class="sub-list" v-loading="replyPages[c.id]?.loading">
@@ -276,7 +339,9 @@ onMounted(() => {
               </span>
               <span class="sub-content">{{ r.content }}</span>
               <span class="sub-time">{{ r.createdAt }}</span>
-              <span class="reply-btn" @click="openReply(c, r)">回复</span>
+              <!-- 父楼层已被删除时整棵子树冻结：后端也会拒绝（不能往已删楼层下挂新回复） -->
+              <span v-if="!c.deleted" class="reply-btn" @click="openReply(c, r)">回复</span>
+              <span v-if="isMine(r.author)" class="reply-btn del" @click="onDeleteComment(r, c)">删除</span>
             </div>
 
             <div v-if="c.replyCount > REPLY_PAGE_SIZE" class="sub-pager">
@@ -289,8 +354,8 @@ onMounted(() => {
             </div>
           </div>
 
-          <!-- 行内回复框：同一时刻只展开一层 -->
-          <div v-if="replyToId === c.id" class="sub-reply-box">
+          <!-- 行内回复框：同一时刻只展开一层；已删楼层不提供（后端也会拒绝） -->
+          <div v-if="replyToId === c.id && !c.deleted" class="sub-reply-box">
             <el-input
               v-model="replyText"
               type="textarea"
@@ -378,6 +443,11 @@ onMounted(() => {
 .floor-content { font-size: 14px; line-height: 1.6; word-break: break-word; }
 .floor-head .reply-btn { color: #bbb; margin-left: 12px; cursor: pointer; }
 .floor-head .reply-btn:hover { color: #4e6ef2; }
+/* 删除入口：比「回复」更靠右、颜色也提示危险性 */
+.reply-btn.del { color: #f56c6c; }
+.reply-btn.del:hover { color: #c45656; }
+/* 已删除楼层的占位文案 */
+.floor-gone { color: #bbb; font-style: italic; }
 
 /* ==================== 楼中楼 ==================== */
 .sub-list { margin-top: 8px; padding: 6px 10px; background: #f7f8fa; border-radius: 4px; position: relative; }

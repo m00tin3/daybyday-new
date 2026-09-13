@@ -24,8 +24,11 @@ public class NotificationRow {
     /** 触发者头像（join user） */
     private String fromIcon;
 
-    /** 帖子标题（join post；帖子被删则为 null） */
+    /** 帖子标题（join post）。注意：帖子被**软删除**时行仍在，这里照样有值 */
     private String postTitle;
+
+    /** 帖子状态（join post）。帖子被物理删除时为 null —— 与软删除一样按"不可见"处理 */
+    private Integer postStatus;
 
     /** 回复内容摘要（join comment，SQL 侧截断；点赞类为 null） */
     private String commentSnippet;

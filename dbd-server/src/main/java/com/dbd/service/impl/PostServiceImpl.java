@@ -484,11 +484,15 @@ public class PostServiceImpl implements PostService {
         size = size == null || size < 1 ? 10 : Math.min(size, 50);
         requirePost(postId);
 
+        // ⚠️ 顶层楼层**刻意不过滤 status**：被作者删掉的楼层要留在列表里当占位。
+        // 原因：子回复是挂在父楼层下渲染的，父楼层若被过滤掉，子回复就无处安放 ——
+        // 而需求明确"删楼层只隐藏这一条、它的子回复保留可见"。
+        // 副作用：分页 total 会把占位也算进去（贴吧同款：删掉的楼层占着位置，页码不跳动），
+        // 所以 API.md 里"total 是楼层数"的说法要相应改成"楼层数 + 占位数"。
         IPage<Comment> rows = commentMapper.selectPage(new Page<>(page, size),
                 new LambdaQueryWrapper<Comment>()
                         .eq(Comment::getPostId, postId)
                         .isNull(Comment::getParentId)
-                        .eq(Comment::getStatus, 1)
                         .orderByAsc(Comment::getFloorNo));
         List<Comment> records = rows.getRecords();
 
@@ -506,8 +510,12 @@ public class PostServiceImpl implements PostService {
         // 顶层楼层作者 + 子回复作者 + 子回复的"被回复者"一次性批量查，避免逐条回表。
         // 被回复者也要查：前端要显示「回复 @某某」，而目标那条可能不在这几条预览里，
         // 前端无从反查昵称，只能这里顺手带上。
+        // ⚠️ 已删楼层的作者**不进批量查询**：占位不该把作者信息带出来。
+        // 从源头上不查，就不存在"复用了 CommentVO.from 但漏清某个字段"的泄露风险。
         Set<Long> authorIds = new HashSet<>();
-        records.forEach(c -> authorIds.add(c.getUserId()));
+        records.stream()
+                .filter(c -> Comment.isVisible(c.getStatus()))
+                .forEach(c -> authorIds.add(c.getUserId()));
         repliesByParent.values().forEach(children -> children.forEach(c -> {
             authorIds.add(c.getUserId());
             if (c.getReplyToUserId() != null) {
@@ -522,20 +530,22 @@ public class PostServiceImpl implements PostService {
         // 徽章要连子回复作者一起批量挂，否则楼中楼里的昵称没有角标
         List<CommentVO> badgeTargets = new ArrayList<>();
         for (Comment c : records) {
-            CommentVO vo = CommentVO.from(c, userMap.get(c.getUserId()));
             List<Comment> children = repliesByParent.getOrDefault(c.getId(), List.of());
+            boolean deleted = !Comment.isVisible(c.getStatus());
+
+            // 已删楼层走占位构造，但**绝不能 continue** ——
+            // 下面的 replyCount / replies 必须照常赋值，否则前端 `v-if="c.replyCount > 0"` 为假、
+            // 子回复整块不渲染，直接违反"删楼层保留子回复"的需求。
+            CommentVO vo = deleted
+                    ? CommentVO.placeholder(c)
+                    : CommentVO.from(c, userMap.get(c.getUserId()));
+            // 楼层被删时，不能让它出现在子回复的「回复 @某某」里（否则作者昵称就漏了）
+            Long suppressReplyTo = deleted ? c.getUserId() : null;
+            List<CommentVO> firstPage = buildReplyPreview(children, userMap, suppressReplyTo);
+
             // replyCount 是**总数**（前端据此决定要不要在该层内分页）；
             // replies 是**第 1 页**，超过 REPLY_PAGE_SIZE 的部分前端翻页时走 floorReplies 拉
             vo.setReplyCount((long) children.size());
-            List<CommentVO> firstPage = children.stream()
-                    .limit(REPLY_PAGE_SIZE)
-                    .map(child -> {
-                        CommentVO childVo = CommentVO.from(child, userMap.get(child.getUserId()));
-                        User repliedTo = userMap.get(child.getReplyToUserId());
-                        childVo.setReplyToNickname(repliedTo == null ? null : repliedTo.getNickname());
-                        return childVo;
-                    })
-                    .toList();
             vo.setReplies(firstPage);
             list.add(vo);
             badgeTargets.add(vo);
@@ -543,6 +553,32 @@ public class PostServiceImpl implements PostService {
         }
         badgeService.fillCommentAuthors(badgeTargets);
         return PageResult.of(list, rows.getTotal(), page, size);
+    }
+
+    /**
+     * 组装子回复预览（第 1 页）。
+     *
+     * @param suppressReplyToUserId 非空时，抑制"回复的正是这个用户"的那几条子回复的 @昵称。
+     *                              用于父楼层已被删除的场景 —— 子回复本身要保留可见，
+     *                              但它的「回复 @某某」会把已删楼层的作者昵称漏出去。
+     */
+    private List<CommentVO> buildReplyPreview(List<Comment> children,
+                                              Map<Long, User> userMap,
+                                              Long suppressReplyToUserId) {
+        return children.stream()
+                .limit(REPLY_PAGE_SIZE)
+                .map(child -> {
+                    CommentVO childVo = CommentVO.from(child, userMap.get(child.getUserId()));
+                    if (suppressReplyToUserId != null
+                            && suppressReplyToUserId.equals(child.getReplyToUserId())) {
+                        childVo.setReplyToNickname(null);
+                        return childVo;
+                    }
+                    User repliedTo = userMap.get(child.getReplyToUserId());
+                    childVo.setReplyToNickname(repliedTo == null ? null : repliedTo.getNickname());
+                    return childVo;
+                })
+                .toList();
     }
 
     /**
@@ -609,9 +645,10 @@ public class PostServiceImpl implements PostService {
         Long userId = UserContext.get();
         Post postRow = requirePost(postId);
 
-        // 楼中楼父楼层校验：必须存在、必须属于本帖、且自身必须是顶层。
-        // 后两条不能省：只判"存在"的话，能拿 A 帖的楼层 id 往 B 帖挂回复，
-        // 也能对一条子回复再回复（三层）——而两层结构下渲染层根本表达不了三层。
+        // 楼中楼父楼层校验：必须存在、属于本帖、自身是顶层、且**未被作者删除**。
+        // 后三条都不能省：只判"存在"的话，能拿 A 帖的楼层 id 往 B 帖挂回复、
+        // 能对一条子回复再回复（三层）、还能往一个已经删掉的楼层里回帖。
+        // 前端虽然不给已删楼层渲染「回复」按钮，但接口不能指望前端。
         Comment parent = null;
         if (dto.getParentId() != null) {
             parent = commentMapper.selectById(dto.getParentId());
@@ -620,6 +657,9 @@ public class PostServiceImpl implements PostService {
             }
             if (parent.getParentId() != null) {
                 throw BusinessException.param("只支持两级回复，不能再回复楼中楼");
+            }
+            if (!Comment.isVisible(parent.getStatus())) {
+                throw BusinessException.notFound("该楼层已被删除");
             }
         }
 
@@ -648,7 +688,10 @@ public class PostServiceImpl implements PostService {
         Long replyToUserId = parent == null ? null : parent.getUserId();
         if (dto.getReplyToCommentId() != null) {
             Comment target = commentMapper.selectById(dto.getReplyToCommentId());
-            if (target == null || !postId.equals(target.getPostId())) {
+            // 同上：已删的评论不能被回复 —— 否则通知会发给一条已删内容的作者，
+            // 等于告诉对方"你删掉的那条被人回复了"
+            if (target == null || !postId.equals(target.getPostId())
+                    || !Comment.isVisible(target.getStatus())) {
                 throw BusinessException.notFound("所回复的评论不存在");
             }
             replyToUserId = target.getUserId();
@@ -695,6 +738,70 @@ public class PostServiceImpl implements PostService {
         // 前端据此区分"盖楼成功，你是第 N 楼"与"回复成功"（楼中楼 floorNo 恒为 0）
         result.put("parentId", dto.getParentId() == null ? null : String.valueOf(dto.getParentId()));
         return result;
+    }
+
+    /* ==================== 用户自主删除（软删除） ==================== */
+
+    @Override
+    public void deleteOwnPost(Long postId) {
+        Long userId = UserContext.get();
+        // 刻意不用 requirePost：它把 status=0 也判成"不存在"，会导致"再删一次"报 2002
+        // 而不是幂等成功。
+        Post post = postMapper.selectById(postId);
+        if (post == null) {
+            throw BusinessException.notFound("帖子不存在");
+        }
+        if (!userId.equals(post.getUserId())) {
+            throw BusinessException.forbidden("只能删除自己的帖子");
+        }
+        if (post.getStatus() != null && post.getStatus() == Post.STATUS_DELETED) {
+            return; // 已经删过，幂等返回
+        }
+        // ⚠️ 只改帖子自己的 status，**绝不逐条改楼层的 status**：
+        // 楼层行保留、status 仍是 1 → 回复者「TA 的回复」里的记录完好；
+        // 而帖子不可见 → requirePost 抛 2002 → 详情/楼层接口全 404 → 整栋楼到不了。
+        updatePostStatus(postId, Post.STATUS_DELETED);
+        evictPostCache(postId);
+        log.info("用户删除自己的帖子 postId={}, userId={}", postId, userId);
+    }
+
+    @Override
+    public void deleteOwnComment(Long postId, Long commentId) {
+        Long userId = UserContext.get();
+        requirePost(postId); // 帖子本身已不可见时，不允许再操作它的楼层
+        Comment comment = commentMapper.selectById(commentId);
+        if (comment == null || !postId.equals(comment.getPostId())) {
+            throw BusinessException.notFound("回复不存在");
+        }
+        if (!userId.equals(comment.getUserId())) {
+            throw BusinessException.forbidden("只能删除自己的回复");
+        }
+        if (!Comment.isVisible(comment.getStatus())) {
+            return; // 已经删过，幂等返回
+        }
+        Comment update = new Comment();
+        update.setId(commentId);
+        update.setStatus(Comment.STATUS_DELETED);
+        commentMapper.updateById(update);
+
+        // 子回复**不跟着删** —— 删顶层楼层时其楼中楼按需求保留可见，
+        // 所以回复数只减 1（只减被删的这条）。GREATEST 兜底防负数。
+        postMapper.update(null, new LambdaUpdateWrapper<Post>()
+                .eq(Post::getId, postId)
+                .setSql("comment_count = GREATEST(comment_count - 1, 0)"));
+
+        // 详情缓存与首页列表缓存存的都是整份 PostVO（含 commentCount），两个都要失效
+        deleteCache(postId);
+        deleteHomeListCache();
+        log.info("用户删除自己的回复 postId={}, commentId={}, userId={}", postId, commentId, userId);
+    }
+
+    /** 只更新 status 字段，避免整对象覆盖（其余字段保持 DB 原值） */
+    private void updatePostStatus(Long postId, int status) {
+        Post update = new Post();
+        update.setId(postId);
+        update.setStatus(status);
+        postMapper.updateById(update);
     }
 
     /* ==================== 管理端支撑 ==================== */

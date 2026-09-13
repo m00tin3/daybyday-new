@@ -11,6 +11,7 @@ import com.dbd.vo.PostVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -102,5 +103,19 @@ public class PostController {
     @PostMapping("/{id}/comment")
     public Result<Map<String, Object>> addComment(@PathVariable Long id, @Valid @RequestBody CommentDTO dto) {
         return Result.ok(postService.addComment(id, dto), "盖楼成功");
+    }
+
+    @Operation(summary = "删除自己的帖子 🔒（软删除，仅本人；删后整帖不可见，不可恢复）")
+    @DeleteMapping("/{id}")
+    public Result<Void> deleteOwnPost(@PathVariable Long id) {
+        postService.deleteOwnPost(id);
+        return Result.ok(null, "已删除");
+    }
+
+    @Operation(summary = "删除自己的回复 🔒（软删除，仅本人；楼层内的楼中楼会保留可见）")
+    @DeleteMapping("/{id}/comment/{commentId}")
+    public Result<Void> deleteOwnComment(@PathVariable Long id, @PathVariable Long commentId) {
+        postService.deleteOwnComment(id, commentId);
+        return Result.ok(null, "已删除");
     }
 }
