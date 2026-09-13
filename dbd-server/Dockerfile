@@ -16,9 +16,11 @@ COPY settings.xml /root/.m2/settings.xml
 COPY pom.xml .
 COPY src ./src
 
-# 说明：原实现的 `mvn dependency:go-offline` 预热层在容器内会卡死在
-#       futex 等待（实测 8 分钟 CPU 仅 58s、零 TCP 连接），且 `mvn package`
-#       本身即可完成依赖解析，故移除该步骤以保证构建可靠。
+# ⚠️ 这里不要加 `mvn dependency:go-offline` 预热，也不要给 /root/.m2 加
+#    BuildKit `--mount=type=cache`。两者都会让容器内的 JVM 卡死在 futex 等待：
+#    实测进程存活 30 分钟、CPU 占用仅 0.7%、零 TCP 连接，构建永远不会结束。
+#    代价是改源码后 `COPY src` 会让后续层失效、依赖重新下载（国内约 5-6 分钟），
+#    但这是可靠性与速度之间必须接受的取舍。
 RUN mvn -q -DskipTests package
 
 # ---- 运行阶段 ----
