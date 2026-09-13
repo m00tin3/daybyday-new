@@ -3,7 +3,9 @@
 import { ref } from 'vue'
 import { getPostList } from '../api/post'
 import { getBarRank } from '../api/bar'
+import { getActivityList } from '../api/activity'
 import PostCard from '../components/PostCard.vue'
+import BadgePill from '../components/BadgePill.vue'
 
 const loading = ref(true)
 const posts = ref([])
@@ -11,6 +13,20 @@ const bars = ref([])
 const page = ref(1)
 const total = ref(0)
 const size = 10
+
+/**
+ * 进行中的限量徽章（侧栏展示）。
+ * 原实现把活动 ID 硬编码成 /activity/1001、/activity/1002，活动一旦重建/删除
+ * 就会点进「活动不存在」；这里改为实时拉取，最多展示 3 个。
+ */
+const badges = ref([])
+
+async function loadBadges() {
+  try {
+    const res = await getActivityList({ type: 2, page: 1, size: 20 })
+    badges.value = (res.data?.list ?? []).filter(a => a.status === 1).slice(0, 3)
+  } catch { badges.value = [] }
+}
 
 // mock 数据：仅在后端不可用时兜底展示
 const mockPosts = [
@@ -54,6 +70,7 @@ async function loadBars() {
 
 load()
 loadBars()
+loadBadges()
 </script>
 
 <template>
@@ -87,8 +104,15 @@ loadBars()
         <div class="side-item" @click="$router.push('/rank')"><a>🏆 排行榜</a></div>
         <div class="side-item" @click="$router.push('/search')"><a>🔥 热搜</a></div>
         <div class="side-item" @click="$router.push('/city')"><a>🏙 城市</a></div>
-        <div class="side-item" @click="$router.push('/activity/1001')"><a>🎁 限量徽章</a></div>
-        <div class="side-item" @click="$router.push('/activity/1002')"><a>🎯 抢楼活动</a></div>
+      </div>
+      <div class="side-card">
+        <h3>限量徽章</h3>
+        <div v-for="a in badges" :key="a.id" class="side-item badge-item" @click="$router.push(`/activity/${a.id}`)">
+          <BadgePill :name="a.badgeName" />
+          <span class="badge-stock">剩 {{ a.remainStock }} / {{ a.stock }}</span>
+        </div>
+        <p v-if="!badges.length" class="side-empty">暂无进行中的徽章</p>
+        <div class="side-item more" @click="$router.push('/activity')"><a>查看全部 →</a></div>
       </div>
     </aside>
   </div>
@@ -106,4 +130,8 @@ loadBars()
 .side-item a { color: #333; text-decoration: none; }
 .side-item:hover a { color: #4e6ef2; }
 .side-item .members { margin-left: auto; color: #aaa; font-size: 12px; }
+.side-item.badge-item { gap: 8px; }
+.badge-stock { margin-left: auto; color: #aaa; font-size: 12px; }
+.side-empty { font-size: 12px; color: #bbb; margin-bottom: 10px; }
+.side-item.more a { color: #4e6ef2; font-size: 12px; }
 </style>
