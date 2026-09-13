@@ -16,6 +16,7 @@ import com.dbd.mapper.PostFavoriteMapper;
 import com.dbd.mapper.PostMapper;
 import com.dbd.mapper.UserMapper;
 import com.dbd.service.BadgeService;
+import com.dbd.service.PostCountService;
 import com.dbd.service.PostService;
 import com.dbd.service.UserService;
 import com.dbd.utils.RedisIdWorker;
@@ -60,12 +61,14 @@ public class UserServiceImpl implements UserService {
     private final RedisIdWorker redisIdWorker;
     /** 作者/用户徽章填充（用户主页、收藏列表、资料回显） */
     private final BadgeService badgeService;
+    /** 点赞/收藏计数回填（DB 那两列从来没被写过，真实值在 Redis Set 里） */
+    private final PostCountService postCountService;
 
     public UserServiceImpl(UserMapper userMapper, PostMapper postMapper,
                            PostFavoriteMapper postFavoriteMapper, FollowMapper followMapper,
                            BarMapper barMapper, PostService postService,
                            StringRedisTemplate stringRedisTemplate, RedisIdWorker redisIdWorker,
-                           BadgeService badgeService) {
+                           BadgeService badgeService, PostCountService postCountService) {
         this.userMapper = userMapper;
         this.postMapper = postMapper;
         this.postFavoriteMapper = postFavoriteMapper;
@@ -75,6 +78,7 @@ public class UserServiceImpl implements UserService {
         this.stringRedisTemplate = stringRedisTemplate;
         this.redisIdWorker = redisIdWorker;
         this.badgeService = badgeService;
+        this.postCountService = postCountService;
     }
 
     /* ==================== 主页信息 ==================== */
@@ -146,6 +150,8 @@ public class UserServiceImpl implements UserService {
             list.add(PostVO.from(post, author, barNameMap.get(post.getBarId())));
         }
         badgeService.fillPostAuthors(list);
+        // 收藏列表同样要回填实时点赞数（PostCard 会展示）
+        postCountService.fill(list);
         return PageResult.of(list, favPage.getTotal(), page, size);
     }
 

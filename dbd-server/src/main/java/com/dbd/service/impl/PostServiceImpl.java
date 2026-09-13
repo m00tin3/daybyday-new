@@ -22,6 +22,7 @@ import com.dbd.mapper.PostMapper;
 import com.dbd.mapper.UserMapper;
 import com.dbd.service.BadgeService;
 import com.dbd.service.FeedService;
+import com.dbd.service.PostCountService;
 import com.dbd.service.PostService;
 import com.dbd.utils.RedisIdWorker;
 import com.dbd.utils.RedisKeyConstants;
@@ -72,6 +73,8 @@ public class PostServiceImpl implements PostService {
     private final FeedService feedService;
     /** 作者徽章批量填充（帖子列表/详情/楼层），避免每个作者一次查询 */
     private final BadgeService badgeService;
+    /** 点赞/收藏计数回填（以 Redis 为准，DB 那两列从来没被写过） */
+    private final PostCountService postCountService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 详情缓存基础 TTL：10 分钟 + 0~5 分钟随机偏移（防雪崩） */
@@ -88,7 +91,8 @@ public class PostServiceImpl implements PostService {
                            PostLikeMapper postLikeMapper, PostFavoriteMapper postFavoriteMapper,
                            UserMapper userMapper, BarMapper barMapper,
                            StringRedisTemplate stringRedisTemplate, RedisIdWorker redisIdWorker,
-                           FeedService feedService, BadgeService badgeService) {
+                           FeedService feedService, BadgeService badgeService,
+                           PostCountService postCountService) {
         this.postMapper = postMapper;
         this.commentMapper = commentMapper;
         this.postLikeMapper = postLikeMapper;
@@ -99,6 +103,7 @@ public class PostServiceImpl implements PostService {
         this.redisIdWorker = redisIdWorker;
         this.feedService = feedService;
         this.badgeService = badgeService;
+        this.postCountService = postCountService;
     }
 
     /* ==================== 列表 ==================== */
@@ -116,13 +121,20 @@ public class PostServiceImpl implements PostService {
             String cacheKey = RedisKeyConstants.POST_LIST_HOME + page;
             String cached = stringRedisTemplate.opsForValue().get(cacheKey);
             if (cached != null) {
-                return parsePage(cached, page, size);
+                PageResult<PostVO> result = parsePage(cached, page, size);
+                postCountService.fill(result.getList());
+                return result;
             }
             PageResult<PostVO> result = queryPage(null, null, null, null, page, size);
+            // 先写缓存再回填计数：缓存里存的应该是 DB 原值（点赞/收藏恒 0），
+            // 每请求回填才是实时值 —— 否则刚点的赞会被缓存冻住最长 60 秒（LIST_TTL）
             stringRedisTemplate.opsForValue().set(cacheKey, serialize(result), LIST_TTL);
+            postCountService.fill(result.getList());
             return result;
         }
-        return queryPage(barId, userId, cityFilter, keyword, page, size);
+        PageResult<PostVO> result = queryPage(barId, userId, cityFilter, keyword, page, size);
+        postCountService.fill(result.getList());
+        return result;
     }
 
     private PageResult<PostVO> queryPage(Long barId, Long userId, String city, String keyword,
@@ -278,6 +290,9 @@ public class PostServiceImpl implements PostService {
             vo.setIsLiked(false);
             vo.setIsFavorited(false);
         }
+        // 点赞/收藏数同样以 Redis 为准：DB 的 like_count / favorite_count 从来没被写过，
+        // 直接读会恒为 0（浏览量之所以正常，是因为下面的 countView 每请求都覆盖了一次）
+        postCountService.fill(List.of(vo));
         badgeService.fillAuthor(vo.getAuthor());
         countView(id, vo);
     }

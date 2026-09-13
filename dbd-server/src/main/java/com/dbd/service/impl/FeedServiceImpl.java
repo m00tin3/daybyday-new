@@ -12,6 +12,7 @@ import com.dbd.mapper.PostMapper;
 import com.dbd.mapper.UserMapper;
 import com.dbd.service.BadgeService;
 import com.dbd.service.FeedService;
+import com.dbd.service.PostCountService;
 import com.dbd.utils.RedisKeyConstants;
 import com.dbd.utils.UserContext;
 import com.dbd.vo.FeedResult;
@@ -49,17 +50,20 @@ public class FeedServiceImpl implements FeedService {
     private final BarMapper barMapper;
     private final StringRedisTemplate stringRedisTemplate;
     private final BadgeService badgeService;
+    /** 点赞/收藏计数回填（DB 那两列从来没被写过，真实值在 Redis Set 里） */
+    private final PostCountService postCountService;
 
     public FeedServiceImpl(FollowMapper followMapper, PostMapper postMapper,
                            UserMapper userMapper, BarMapper barMapper,
                            StringRedisTemplate stringRedisTemplate,
-                           BadgeService badgeService) {
+                           BadgeService badgeService, PostCountService postCountService) {
         this.followMapper = followMapper;
         this.postMapper = postMapper;
         this.userMapper = userMapper;
         this.barMapper = barMapper;
         this.stringRedisTemplate = stringRedisTemplate;
         this.badgeService = badgeService;
+        this.postCountService = postCountService;
     }
 
     /* ==================== 时间线查询 ==================== */
@@ -201,6 +205,8 @@ public class FeedServiceImpl implements FeedService {
         }
         // 关注流里同一作者可能连续出现多条，徽章批量查一次即可（内部按用户缓存）
         badgeService.fillPostAuthors(list);
+        // 点赞/收藏数同样批量覆盖成 Redis 实时值（否则 PostCard 上恒显示 0 赞）
+        postCountService.fill(list);
         return list;
     }
 

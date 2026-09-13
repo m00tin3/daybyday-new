@@ -8,6 +8,7 @@ import com.dbd.mapper.BarMapper;
 import com.dbd.mapper.PostMapper;
 import com.dbd.mapper.UserMapper;
 import com.dbd.service.BadgeService;
+import com.dbd.service.PostCountService;
 import com.dbd.service.RankService;
 import com.dbd.utils.RedisKeyConstants;
 import com.dbd.vo.PostVO;
@@ -36,14 +37,18 @@ public class RankServiceImpl implements RankService {
     private final BarMapper barMapper;
     private final StringRedisTemplate stringRedisTemplate;
     private final BadgeService badgeService;
+    /** 点赞/收藏计数回填（DB 那两列从来没被写过，真实值在 Redis Set 里） */
+    private final PostCountService postCountService;
 
     public RankServiceImpl(PostMapper postMapper, UserMapper userMapper, BarMapper barMapper,
-                           StringRedisTemplate stringRedisTemplate, BadgeService badgeService) {
+                           StringRedisTemplate stringRedisTemplate, BadgeService badgeService,
+                           PostCountService postCountService) {
         this.postMapper = postMapper;
         this.userMapper = userMapper;
         this.barMapper = barMapper;
         this.stringRedisTemplate = stringRedisTemplate;
         this.badgeService = badgeService;
+        this.postCountService = postCountService;
     }
 
     @Override
@@ -85,6 +90,8 @@ public class RankServiceImpl implements RankService {
             result.add(PostVO.from(post, userMap.get(post.getUserId()), barNameMap.get(post.getBarId())));
         }
         badgeService.fillPostAuthors(result);
+        // 热帖榜里的 score 本来就是从 Redis 算的，展示用的点赞数也必须取实时值
+        postCountService.fill(result);
         return result;
     }
 
