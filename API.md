@@ -142,8 +142,8 @@
 | parentId | Long | 楼中楼父楼层ID（null=直接回帖；两层结构下恒为**顶层**楼层） |
 | replyToUserId | Long | 被回复者ID（点的是哪条评论的作者）；null=回复楼主层本身 |
 | replyToNickname | String | 被回复者昵称，供前端渲染「回复 @某某」；目标可能不在预览里，故由后端给 |
-| replies | CommentVO[] | **仅顶层楼层有**：子回复预览（前 3 条） |
-| replyCount | Long | 子回复总数（仅顶层楼层有）；大于 `replies.length` 时前端显示「共 N 条回复」 |
+| replies | CommentVO[] | **仅顶层楼层有**：子回复的**第 1 页**（最多 10 条） |
+| replyCount | Long | 子回复总数（仅顶层楼层有）；大于 10 时前端在该层内分页（见 §3.2.6.1） |
 | likeCount | Long | 点赞数 |
 | createdAt | String | 时间 |
 
@@ -287,10 +287,27 @@
 | size | Integer | 否 | 默认 10（最大 50） |
 
 - 成功：`{ "code": 1, "data": { "list": [ CommentVO 按 floorNo 升序 ], "total": Long, "page": 1, "size": 10 } }`
-- **楼中楼（固定 2 层）**：列表只返回顶层楼层（`parentId = null`），每个顶层楼层的 `replies` 挂前 3 条子回复、`replyCount` 给总数
+- **楼中楼（固定 2 层）**：列表只返回顶层楼层（`parentId = null`），每个顶层楼层的 `replies` 挂**第 1 页**子回复（`REPLY_PAGE_SIZE = 10` 条）、`replyCount` 给总数
+- 某一层的子回复若超过 10 条，前端在**该层内翻页**（仿贴吧的层内翻页），第 2 页起走 §3.2.6.1
 - `total` **不含**子回复（它是"楼层数"而非"回复数"）；帖子卡片上的「回复 N」用 `post.commentCount`，那个**含**子回复
 - 批量组装：本页所有顶层楼层的子回复用**一次 `IN` 查询**取回后按 `parentId` 分组，不做逐层查询；作者与被回复者昵称也**一次批量查**
 - 子回复的 `floor_no` 为 0（哨兵，不占楼层号）——否则顶层楼层号会出现 `[1,3]` 空档
+
+> **已知取舍**：为了同时得到"每层总数"和"每层前 10 条"，这里把本页楼层**全部**子回复取回后在内存分组，
+> 量级 = 本页楼层数 × 每层回复数。演示规模下没问题；若日后热帖单层回复上千，
+> 应改为「分组 COUNT + 窗口函数每组取前 N」两条查询。翻页（§3.2.6.1）本身是按索引精确取一页，不受影响。
+
+#### 3.2.6.1 某一层楼的子回复分页（楼中楼翻页）
+`GET /api/post/{id}/comment/{floorId}/replies`
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| floorId | Long | 是 | **顶层**楼层ID（传子回复的 id 会 2002） |
+| page / size | Integer | 否 | 默认 1 / 10（最大 50） |
+
+- 成功：分页结构（CommentVO 按 `created_at, id` 升序）
+- 走 `idx_post_parent(post_id, parent_id)` 精确取一页，**每次只传 size 条**，与楼层的多寡无关
+- 校验：楼层必须存在于**本帖**且自身为顶层 —— 否则能拿 A 帖的楼层 id 翻出 B 帖的子回复
+- 失败：帖子不存在 → 2002；楼层不存在 / 不属于本帖 / 本身是子回复 → 2002
 
 #### 3.2.7 回帖/盖楼 🔒
 `POST /api/post/{id}/comment`
@@ -791,7 +808,8 @@
 | `post.createPost` | /api/post | POST | 🔒 |
 | `post.likePost` | /api/post/{id}/like | POST | 🔒 |
 | `post.favoritePost` | /api/post/{id}/favorite | POST | 🔒 |
-| `post.getComments` | /api/post/{id}/comments | GET | - |
+| `post.getComments` | /api/post/{id}/comments | GET | -（每层带第 1 页子回复 + 子回复总数） |
+| `post.getFloorReplies` | /api/post/{id}/comment/{floorId}/replies | GET | -（楼中楼层内翻页） |
 | `post.addComment` | /api/post/{id}/comment | POST | 🔒 |
 | `bar.getBarInfo` | /api/bar/{id} | GET | - |
 | `bar.getBarPosts` | /api/bar/{id}/posts | GET | - |

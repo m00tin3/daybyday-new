@@ -50,8 +50,18 @@ public interface PostService {
     /** 收藏/取消（幂等切换），返回 { isFavorited, favoriteCount } */
     Map<String, Object> favorite(Long postId);
 
-    /** 楼层列表（直接楼层，楼中楼后续迭代） */
+    /**
+     * 楼层列表（只含顶层楼层；每层带第 1 页子回复与子回复总数）。
+     * <p>{@code total} 是**楼层数**，不含子回复。</p>
+     */
     PageResult<CommentVO> comments(Long postId, Integer page, Integer size);
+
+    /**
+     * 某一层楼下的子回复分页（楼中楼层内翻页）。
+     *
+     * @param floorId 顶层楼层ID
+     */
+    PageResult<CommentVO> floorReplies(Long postId, Long floorId, Integer page, Integer size);
 
     /** 回帖：楼层号 INCR + 防重复提交，返回 { id, floorNo } */
     Map<String, Object> addComment(Long postId, CommentDTO dto);

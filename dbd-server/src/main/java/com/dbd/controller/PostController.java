@@ -89,6 +89,15 @@ public class PostController {
         return Result.ok(postService.comments(id, page, size));
     }
 
+    @Operation(summary = "某一层楼的子回复分页（楼中楼翻页）")
+    @GetMapping("/{id}/comment/{floorId}/replies")
+    public Result<PageResult<CommentVO>> floorReplies(@PathVariable Long id,
+                                                      @PathVariable Long floorId,
+                                                      @RequestParam(required = false, defaultValue = "1") Integer page,
+                                                      @RequestParam(required = false, defaultValue = "10") Integer size) {
+        return Result.ok(postService.floorReplies(id, floorId, page, size));
+    }
+
     @Operation(summary = "回帖/盖楼 🔒")
     @PostMapping("/{id}/comment")
     public Result<Map<String, Object>> addComment(@PathVariable Long id, @Valid @RequestBody CommentDTO dto) {

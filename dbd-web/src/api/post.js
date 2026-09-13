@@ -34,9 +34,14 @@ export function favoritePost(id) {
   return request.post(`/post/${id}/favorite`)
 }
 
-/** 楼层列表 GET /api/post/{id}/comments */
+/** 楼层列表 GET /api/post/{id}/comments（每层带第 1 页子回复 + 子回复总数） */
 export function getComments(postId, params) {
   return request.get(`/post/${postId}/comments`, { params })
+}
+
+/** 某一层楼的子回复分页 GET /api/post/{id}/comment/{floorId}/replies（楼中楼翻页） */
+export function getFloorReplies(postId, floorId, params) {
+  return request.get(`/post/${postId}/comment/${floorId}/replies`, { params })
 }
 
 /** 回帖/盖楼 🔒 POST /api/post/{id}/comment */

@@ -3,7 +3,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getPostDetail, likePost, favoritePost, getComments, addComment } from '../api/post'
+import { getPostDetail, likePost, favoritePost, getComments, getFloorReplies, addComment } from '../api/post'
 import { useUserStore } from '../stores/user'
 import BadgePill from '../components/BadgePill.vue'
 
@@ -21,6 +21,9 @@ const size = ref(10)
 const commentText = ref('')
 const submitting = ref(false)
 
+/** 每层楼内联展示的子回复条数；超过就层内分页（与后端 PostServiceImpl.REPLY_PAGE_SIZE 保持一致） */
+const REPLY_PAGE_SIZE = 10
+
 async function loadPost() {
   try {
     const res = await getPostDetail(postId)
@@ -37,8 +40,47 @@ async function loadComments() {
     const res = await getComments(postId, { page: page.value, size: size.value })
     comments.value = res.data?.list ?? []
     commentTotal.value = res.data?.total ?? 0
+    // 楼层数据整体刷新了，各层的翻页缓存必须一起作废（否则会停在旧的第 N 页）
+    replyPages.value = {}
   } catch {
     comments.value = []
+  }
+}
+
+/* ==================== 楼中楼翻页（仿贴吧的层内翻页） ==================== */
+
+// 每层楼的翻页状态：{ [floorId]: { page, list, total, loading } }。
+// 第 1 页直接用 comments() 随楼层带回来的 c.replies，翻到第 2 页起才请求并覆盖。
+const replyPages = ref({})
+
+/** 该层当前要显示的回复：翻过页就用翻页缓存，否则用楼层自带的第 1 页 */
+function repliesOf(c) {
+  return replyPages.value[c.id]?.list ?? c.replies ?? []
+}
+
+function replyPageOf(c) {
+  return replyPages.value[c.id]?.page ?? 1
+}
+
+function totalReplyPages(c) {
+  return Math.max(1, Math.ceil((c.replyCount || 0) / REPLY_PAGE_SIZE))
+}
+
+async function changeReplyPage(c, p) {
+  if (p < 1 || p > totalReplyPages(c) || replyPages.value[c.id]?.loading) {
+    return
+  }
+  replyPages.value[c.id] = { ...(replyPages.value[c.id] || {}), loading: true }
+  try {
+    const res = await getFloorReplies(postId, c.id, { page: p, size: REPLY_PAGE_SIZE })
+    replyPages.value[c.id] = {
+      page: p,
+      list: res.data?.list ?? [],
+      total: res.data?.total ?? 0,
+      loading: false
+    }
+  } catch {
+    replyPages.value[c.id] = { ...(replyPages.value[c.id] || {}), loading: false }
   }
 }
 
@@ -223,9 +265,9 @@ onMounted(() => {
           </div>
           <div class="floor-content">{{ c.content }}</div>
 
-          <!-- 楼中楼：只有前几条预览，其余靠「共 N 条回复」告知 -->
-          <div v-if="c.replies?.length" class="sub-list">
-            <div v-for="r in c.replies" :key="r.id" class="sub-item">
+          <!-- 楼中楼：第 1 页内联完整展示；超过一页时在该层内翻页（仿贴吧） -->
+          <div v-if="c.replyCount > 0" class="sub-list" v-loading="replyPages[c.id]?.loading">
+            <div v-for="r in repliesOf(c)" :key="r.id" class="sub-item">
               <span class="sub-user" @click="$router.push(`/user/${r.author?.id}`)">{{ r.author?.nickname }}</span>
               <BadgePill v-for="b in r.author?.badges || []" :key="b" :name="b" class="inline-badge" />
               <!-- 只有"回复的不是楼主层本身"时才显示 @，避免满屏「回复 @楼主」 -->
@@ -236,7 +278,15 @@ onMounted(() => {
               <span class="sub-time">{{ r.createdAt }}</span>
               <span class="reply-btn" @click="openReply(c, r)">回复</span>
             </div>
-            <div v-if="c.replyCount > c.replies.length" class="sub-more">共 {{ c.replyCount }} 条回复</div>
+
+            <div v-if="c.replyCount > REPLY_PAGE_SIZE" class="sub-pager">
+              <span class="sub-total">共 {{ c.replyCount }} 条回复</span>
+              <el-button link size="small" :disabled="replyPageOf(c) <= 1"
+                         @click="changeReplyPage(c, replyPageOf(c) - 1)">上一页</el-button>
+              <span class="sub-page-no">{{ replyPageOf(c) }}/{{ totalReplyPages(c) }}</span>
+              <el-button link size="small" :disabled="replyPageOf(c) >= totalReplyPages(c)"
+                         @click="changeReplyPage(c, replyPageOf(c) + 1)">下一页</el-button>
+            </div>
           </div>
 
           <!-- 行内回复框：同一时刻只展开一层 -->
@@ -330,7 +380,7 @@ onMounted(() => {
 .floor-head .reply-btn:hover { color: #4e6ef2; }
 
 /* ==================== 楼中楼 ==================== */
-.sub-list { margin-top: 8px; padding: 6px 10px; background: #f7f8fa; border-radius: 4px; }
+.sub-list { margin-top: 8px; padding: 6px 10px; background: #f7f8fa; border-radius: 4px; position: relative; }
 .sub-item { font-size: 13px; line-height: 1.7; padding: 3px 0; border-bottom: 1px dashed #ececec; }
 .sub-item:last-child { border-bottom: none; }
 .sub-user { color: #4e6ef2; cursor: pointer; }
@@ -340,7 +390,10 @@ onMounted(() => {
 .sub-time { color: #bbb; font-size: 12px; margin-left: 8px; }
 .sub-item .reply-btn { color: #bbb; font-size: 12px; margin-left: 8px; cursor: pointer; }
 .sub-item .reply-btn:hover { color: #4e6ef2; }
-.sub-more { font-size: 12px; color: #4e6ef2; padding-top: 6px; }
+/* 层内翻页条（仿贴吧）：一页放不下时才出现 */
+.sub-pager { display: flex; align-items: center; gap: 8px; padding-top: 6px; margin-top: 2px; border-top: 1px dashed #e4e4e4; font-size: 12px; }
+.sub-pager .sub-total { color: #4e6ef2; }
+.sub-pager .sub-page-no { color: #999; }
 .sub-reply-box { margin-top: 10px; }
 .sub-reply-actions { text-align: right; margin-top: 6px; }
 .pager { padding: 12px 0; justify-content: center; }

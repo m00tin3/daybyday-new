@@ -84,8 +84,12 @@ public class PostServiceImpl implements PostService {
     private final NotificationService notificationService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /** 每个顶层楼层最多挂几条子回复预览，其余靠 replyCount 告知总数 */
-    private static final int REPLY_PREVIEW = 3;
+    /**
+     * 每个顶层楼层内联展示几条第 1 页子回复。
+     * <p>超过这个数的楼层，前端在该层内做分页（仿贴吧的层内翻页），
+     * 再来这一页之外的数据走 {@link #floorReplies}。</p>
+     */
+    private static final int REPLY_PAGE_SIZE = 10;
 
     /** 详情缓存基础 TTL：10 分钟 + 0~5 分钟随机偏移（防雪崩） */
     private static final Duration CACHE_TTL = Duration.ofMinutes(10);
@@ -519,10 +523,11 @@ public class PostServiceImpl implements PostService {
         for (Comment c : records) {
             CommentVO vo = CommentVO.from(c, userMap.get(c.getUserId()));
             List<Comment> children = repliesByParent.getOrDefault(c.getId(), List.of());
-            // replyCount 是总数，replies 只挂前几条（前端据此显示「共 N 条回复」）
+            // replyCount 是**总数**（前端据此决定要不要在该层内分页）；
+            // replies 是**第 1 页**，超过 REPLY_PAGE_SIZE 的部分前端翻页时走 floorReplies 拉
             vo.setReplyCount((long) children.size());
-            List<CommentVO> preview = children.stream()
-                    .limit(REPLY_PREVIEW)
+            List<CommentVO> firstPage = children.stream()
+                    .limit(REPLY_PAGE_SIZE)
                     .map(child -> {
                         CommentVO childVo = CommentVO.from(child, userMap.get(child.getUserId()));
                         User repliedTo = userMap.get(child.getReplyToUserId());
@@ -530,13 +535,72 @@ public class PostServiceImpl implements PostService {
                         return childVo;
                     })
                     .toList();
-            vo.setReplies(preview);
+            vo.setReplies(firstPage);
             list.add(vo);
             badgeTargets.add(vo);
-            badgeTargets.addAll(preview);
+            badgeTargets.addAll(firstPage);
         }
         badgeService.fillCommentAuthors(badgeTargets);
         return PageResult.of(list, rows.getTotal(), page, size);
+    }
+
+    /**
+     * 某一层楼下的子回复分页（楼中楼翻页用）。
+     *
+     * <p>为什么单开一个接口而不是让 {@link #comments} 一次全给：一层楼的子回复可能很多，
+     * 主列表只该带第 1 页；翻到第 N 页时按 (post_id, parent_id) 索引精确取一页，
+     * 每次只传 size 条。</p>
+     *
+     * @param floorId 顶层楼层ID（传子回复的 id 会 2002 —— 两层结构下只有顶层才有"下一页"）
+     */
+    @Override
+    public PageResult<CommentVO> floorReplies(Long postId, Long floorId, Integer page, Integer size) {
+        int p = page == null || page < 1 ? 1 : page;
+        int s = size == null || size < 1 ? REPLY_PAGE_SIZE : Math.min(size, 50);
+        requirePost(postId);
+
+        Comment floor = commentMapper.selectById(floorId);
+        // 必须是本帖的顶层楼层：否则能拿 A 帖的楼层 id 去 B 帖翻出别人的子回复
+        if (floor == null || !postId.equals(floor.getPostId()) || floor.getParentId() != null) {
+            throw BusinessException.notFound("楼层不存在");
+        }
+
+        IPage<Comment> rows = commentMapper.selectPage(new Page<>(p, s),
+                new LambdaQueryWrapper<Comment>()
+                        .eq(Comment::getPostId, postId)
+                        .eq(Comment::getParentId, floorId)
+                        .eq(Comment::getStatus, 1)
+                        .orderByAsc(Comment::getCreatedAt)
+                        .orderByAsc(Comment::getId));
+        return PageResult.of(toCommentVOs(rows.getRecords()), rows.getTotal(), p, s);
+    }
+
+    /**
+     * 把楼层/子回复实体批量转成 VO：作者与被回复者昵称一次查完，徽章一次挂完。
+     * <p>{@link #comments} 因为要跨"楼层 + 子回复"合并查用户，没有走这里。</p>
+     */
+    private List<CommentVO> toCommentVOs(List<Comment> records) {
+        if (records == null || records.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> userIds = new HashSet<>();
+        records.forEach(c -> {
+            userIds.add(c.getUserId());
+            if (c.getReplyToUserId() != null) {
+                userIds.add(c.getReplyToUserId());
+            }
+        });
+        Map<Long, User> userMap = userMapper.selectBatchIds(userIds).stream()
+                .collect(Collectors.toMap(User::getId, u -> u));
+        List<CommentVO> list = new ArrayList<>(records.size());
+        for (Comment c : records) {
+            CommentVO vo = CommentVO.from(c, userMap.get(c.getUserId()));
+            User repliedTo = userMap.get(c.getReplyToUserId());
+            vo.setReplyToNickname(repliedTo == null ? null : repliedTo.getNickname());
+            list.add(vo);
+        }
+        badgeService.fillCommentAuthors(list);
+        return list;
     }
 
     @Override
